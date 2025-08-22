@@ -1,0 +1,1112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Home Projects — Firebase</title>
+<!-- Tailwind CSS for a modern look and feel -->
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- Firebase SDKs from CDN -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+  import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+  import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs, runTransaction } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+  
+  // =================================================================================
+  // Global Variables & Constants
+  // These are provided by the Canvas environment for Firebase integration.
+  // DO NOT change these lines.
+  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+  const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+  const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+  // =================================================================================
+
+  const $ = (id) => document.getElementById(id);
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+  // Firebase app and services
+  let app, auth, db;
+  let userId;
+  let authIsReady = false;
+  let isFirstPaintDone = false;
+
+  // State & Utils
+  let DB = { projects: [], people: [], contractors: [], stores: [], categories: ['General'], budgets: {}, contractorDetails: {} };
+  let activeProject = null;
+  let calRef = new Date();
+  const filters = { q: '', category: '', assignee: '', type: '', status: '' };
+  const money = (n) => isFinite(n) ? '$' + (Number(n).toFixed(2)) : '$0.00';
+  const num = (v) => isNaN(parseFloat(v)) ? 0 : parseFloat(v);
+  const fmtDate = (s) => s ? new Date(s + 'T00:00:00').toLocaleDateString() : '';
+  const esc = (s = '') => s.replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] || c));
+
+  // Custom modal/message box to replace browser alerts
+  function showMessage(msg, isError = false) {
+    const modal = $('messageModal');
+    const title = $('messageTitle');
+    const content = $('messageContent');
+    title.textContent = isError ? 'Error' : 'Notification';
+    content.textContent = msg;
+    modal.showModal();
+  }
+
+  function showConfirm(msg, onConfirm) {
+    const modal = $('confirmModal');
+    const content = $('confirmContent');
+    content.textContent = msg;
+    modal.showModal();
+    const confirmBtn = $('confirmBtn');
+    const cancelBtn = $('cancelConfirmBtn');
+
+    // Clean up old listeners to prevent duplicates
+    const newConfirmBtn = confirmBtn.cloneNode(true);
+    const newCancelBtn = cancelBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newConfirmBtn, confirmBtn);
+    cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+
+    newConfirmBtn.onclick = () => { modal.close(); onConfirm(true); };
+    newCancelBtn.onclick = () => { modal.close(); onConfirm(false); };
+  }
+
+
+  // =================================================================================
+  // Firebase Initialization & Data Handlers
+  // =================================================================================
+  function initFirebase() {
+    try {
+      app = initializeApp(firebaseConfig);
+      auth = getAuth(app);
+      db = getFirestore(app);
+
+      onAuthStateChanged(auth, async (user) => {
+        if (user) {
+          userId = user.uid;
+          authIsReady = true;
+          $('userIdDisplay').textContent = `User ID: ${userId}`;
+          console.log(`Authenticated as user: ${userId}`);
+          
+          // Only perform initial render after authentication is ready
+          if (!isFirstPaintDone) {
+            isFirstPaintDone = true;
+            firstPaint();
+          }
+
+          // Listen for real-time updates on the user's projects
+          onSnapshot(collection(db, `/artifacts/${appId}/users/${userId}/projects`), (snapshot) => {
+            DB.projects = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            renderLists();
+          }, (error) => {
+            console.error("Error listening to projects:", error);
+            showMessage("Could not fetch projects. Please refresh the page.", true);
+          });
+          
+          // Listen for real-time updates on the user's directories (people, categories, etc.)
+          onSnapshot(doc(db, `/artifacts/${appId}/users/${userId}/directories`, 'directories'), (docSnapshot) => {
+            if (docSnapshot.exists()) {
+              const data = docSnapshot.data();
+              DB.people = data.people || [];
+              DB.contractors = data.contractors || [];
+              DB.stores = data.stores || [];
+              DB.categories = data.categories || [];
+              DB.budgets = data.budgets || {};
+              DB.contractorDetails = data.contractorDetails || {};
+            }
+            populateSelects();
+            renderDirectories();
+          }, (error) => {
+            console.error("Error listening to directories:", error);
+          });
+          
+        } else {
+          console.log("No user signed in. Attempting anonymous sign-in...");
+          try {
+            if (initialAuthToken) {
+              await signInWithCustomToken(auth, initialAuthToken);
+            } else {
+              await signInAnonymously(auth);
+            }
+          } catch (error) {
+            console.error("Firebase Auth Error:", error);
+            showMessage("Failed to sign in. Some features may not work.", true);
+          }
+        }
+      });
+    } catch (e) {
+      console.error("Failed to initialize Firebase:", e);
+      showMessage("Failed to initialize Firebase. Check your project configuration.", true);
+    }
+  }
+
+  async function saveDirectories() {
+    if (!authIsReady) return;
+    try {
+      const directoriesRef = doc(db, `/artifacts/${appId}/users/${userId}/directories`, 'directories');
+      await setDoc(directoriesRef, {
+        people: DB.people,
+        contractors: DB.contractors,
+        stores: DB.stores,
+        categories: DB.categories,
+        budgets: DB.budgets,
+        contractorDetails: DB.contractorDetails
+      }, { merge: true });
+    } catch (e) {
+      console.error("Failed to save directories:", e);
+      showMessage("Failed to save directories. Please check your connection.", true);
+    }
+  }
+
+  // =================================================================================
+  // Main Rendering and Logic
+  // =================================================================================
+  function populateSelects() {
+    $('filterCategory').innerHTML = `<option value="">All</option>` + DB.categories.map(c => `<option>${esc(c)}</option>`).join('');
+    $('filterAssignee').innerHTML = `<option value="">All</option>` + DB.people.map(p => `<option>${esc(p)}</option>`).join('');
+    $('p_category').innerHTML = DB.categories.map(c => `<option>${esc(c)}</option>`).join('');
+    $('p_assignee').innerHTML = `<option value="">Unassigned</option>` + DB.people.map(p => `<option>${esc(p)}</option>`).join('');
+    $('p_contractor').innerHTML = `<option value="">—</option>` + DB.contractors.map(c => `<option>${esc(c)}</option>`).join('');
+  }
+
+  function applyFilters(list) {
+    return list.filter(p => {
+      if (filters.q) {
+        const hay = [p.title, p.description, p.category, p.assignee, p.type, p.status].join(' ').toLowerCase();
+        if (!hay.includes(filters.q.toLowerCase())) return false;
+      }
+      if (filters.category && p.category !== filters.category) return false;
+      if (filters.assignee && p.assignee !== filters.assignee) return false;
+      if (filters.type && p.type !== filters.type) return false;
+      if (filters.status && p.status !== filters.status) return false;
+      return true;
+    });
+  }
+
+  function computeMoney(p) {
+    const materials = (p.materials || []).reduce((a, m) => a + (num(m.qty) * num(m.cost)), 0);
+    const needed = (p.materials || []).reduce((a, m) => a + ((m.purchased || m.inhouse) ? 0 : (num(m.qty) * num(m.cost))), 0);
+    const contract = num(p.contract_cost || 0);
+    return { materials, needed, contract, total: materials + contract };
+  }
+
+  function renderStats() {
+    const list = DB.projects;
+    const mats = list.reduce((a, p) => a + computeMoney(p).materials, 0);
+    const cons = list.reduce((a, p) => a + computeMoney(p).contract, 0);
+    $('stats').innerHTML = `
+      <span class="px-3 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-800">Projects: ${list.length}</span>
+      <span class="px-3 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-800">Materials: ${money(mats)}</span>
+      <span class="px-3 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-800">Contractors: ${money(cons)}</span>`;
+  }
+
+  function renderList() {
+    const tbody = $('listBody');
+    tbody.innerHTML = '';
+    const list = applyFilters(DB.projects);
+    if (!list.length) {
+      tbody.innerHTML = `<tr><td class="text-center text-gray-500 py-4" colspan="12">No projects matching filters.</td></tr>`;
+      renderStats();
+      return;
+    }
+    for (const p of list) {
+      const m = computeMoney(p);
+      const tr = document.createElement('tr');
+      tr.className = "hover:bg-slate-50 transition-colors cursor-pointer";
+      tr.dataset.id = p.id;
+      tr.innerHTML = `
+        <td class="py-2 px-4 whitespace-nowrap overflow-hidden text-ellipsis max-w-[200px] font-medium text-blue-600">${esc(p.title)}</td>
+        <td class="py-2 px-4 text-center">${esc(p.category || '')}</td>
+        <td class="py-2 px-4 text-center">${esc(p.status || '')}</td>
+        <td class="py-2 px-4 text-center">${esc(p.type || 'DIY')}</td>
+        <td class="py-2 px-4 text-center">${esc(p.assignee || '')}</td>
+        <td class="py-2 px-4 text-center whitespace-nowrap">${fmtDate(p.start)}</td>
+        <td class="py-2 px-4 text-center whitespace-nowrap">${fmtDate(p.end)}</td>
+        <td class="py-2 px-4 text-right">${money(m.materials)}</td>
+        <td class="py-2 px-4 text-right">${money(m.needed)}</td>
+        <td class="py-2 px-4 text-right">${money(m.contract)}</td>
+        <td class="py-2 px-4 text-right font-bold">${money(m.total)}</td>
+      `;
+      tr.onclick = () => openProjectModal(p.id);
+      tbody.appendChild(tr);
+    }
+    renderStats();
+  }
+
+  function renderCalendar() {
+    $('calTitle').textContent = calRef.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    $('calDow').innerHTML = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => `<div class="text-center text-gray-500 text-sm font-medium">${d}</div>`).join('');
+    const first = new Date(calRef.getFullYear(), calRef.getMonth(), 1);
+    const last = new Date(calRef.getFullYear(), calRef.getMonth() + 1, 0).getDate();
+    const start = first.getDay();
+    const grid = $('calGrid');
+    grid.innerHTML = '';
+    for (let i = 0; i < start; i++) grid.appendChild(document.createElement('div'));
+    for (let day = 1; day <= last; day++) {
+      const cell = document.createElement('div');
+      cell.className = 'min-h-[110px] bg-white border border-slate-200 rounded-lg p-2';
+      cell.innerHTML = `<div class="text-xs text-gray-500 mb-1">${day}</div>`;
+      const d = new Date(calRef.getFullYear(), calRef.getMonth(), day);
+      DB.projects.forEach(p => {
+        if (!p.start) return;
+        const s = new Date(p.start + 'T00:00:00');
+        const e = p.end ? new Date(p.end + 'T00:00:00') : s;
+        if (d >= s && d <= e) {
+          const div = document.createElement('div');
+          div.className = `text-xs leading-tight border-l-4 rounded-r-sm pl-2 my-1 overflow-hidden text-ellipsis whitespace-nowrap cursor-pointer ${p.type === 'Contractor' ? 'border-blue-500 text-blue-700' : 'border-green-500 text-green-700'}`;
+          div.textContent = p.title;
+          div.onclick = () => openProjectModal(p.id);
+          cell.appendChild(div);
+        }
+      });
+      grid.appendChild(cell);
+    }
+  }
+
+  function renderLists() {
+    renderList();
+    renderCalendar();
+  }
+
+  // ---------- Directories ----------
+  function renderDirectories() {
+    $('peopleList').innerHTML = DB.people.map(p => `<div class="p-1 px-2 bg-gray-100 rounded-md text-sm">${esc(p)}</div>`).join('') || '<div class="text-gray-500 text-sm">No people yet.</div>';
+    $('contractorList').innerHTML = DB.contractors.map(c => `<div class="p-1 px-2 bg-gray-100 rounded-md text-sm">${esc(c)}</div>`).join('') || '<div class="text-gray-500 text-sm">No contractors yet.</div>';
+    $('storeList').innerHTML = DB.stores.map(s => `<div class="p-1 px-2 bg-gray-100 rounded-md text-sm">${esc(s)}</div>`).join('') || '<div class="text-gray-500 text-sm">No stores yet.</div>';
+    $('categoryList').innerHTML = DB.categories.map(cat => `
+      <div class="flex items-center justify-between p-1 px-2 bg-gray-100 rounded-md text-sm">
+        <span class="mr-2">${esc(cat)}</span>
+        <input class="w-24 text-right text-sm border border-slate-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow" type="number" step="0.01" data-bcat="${esc(cat)}" placeholder="Budget" value="${DB.budgets[cat] || ''}">
+      </div>`).join('') || '<div class="text-gray-500 text-sm">No categories yet.</div>';
+  }
+
+  function openDirectories() {
+    renderDirectories();
+    $('directoriesModal').showModal();
+  }
+
+  function openSummary() {
+    const rows = DB.categories.map(cat => {
+      const used = DB.projects.filter(p => p.category === cat).reduce((a, p) => a + computeMoney(p).total, 0);
+      const budget = Number(DB.budgets[cat] || 0);
+      const diff = budget - used;
+      const diffClass = diff < 0 ? 'text-red-500' : 'text-green-500';
+      return `<tr><td class="py-2 px-4">${esc(cat)}</td><td class="py-2 px-4 text-right">${money(budget)}</td><td class="py-2 px-4 text-right">${money(used)}</td><td class="py-2 px-4 text-right ${diffClass}">${money(diff)}</td></tr>`;
+    }).join('');
+    $('summaryContent').innerHTML = `
+      <table class="w-full text-sm">
+        <thead><tr class="text-xs text-slate-500 uppercase tracking-wider"><th>Category</th><th class="text-right">Budget</th><th class="text-right">Actual</th><th class="text-right">Remaining</th></tr></thead>
+        <tbody class="divide-y divide-slate-200">${rows || '<tr><td colspan="4" class="text-center text-gray-500 py-4">No categories</td></tr>'}</tbody>
+      </table>`;
+    $('summaryModal').showModal();
+  }
+
+  // ---------- Project modal ----------
+  function resetProjectForm() {
+    $('projectForm').reset();
+    $('modalTitle').textContent = 'New Project';
+    $('deleteProject').classList.add('hidden');
+    $('materialsBody').innerHTML = '';
+    $('materialsSubtotal').textContent = '$0.00';
+    $('materialsNeeded').textContent = '$0.00';
+    $('sumMaterials').textContent = '$0.00';
+    $('sumContractor').textContent = '$0.00';
+    $('sumTotal').textContent = '$0.00';
+    $('materialsBlock').classList.add('hidden');
+    $('contractorBlock').classList.add('hidden');
+    $('diyOptions').classList.remove('hidden');
+    $('p_imagePreview').innerHTML = '';
+    activeProject = null;
+  }
+
+  function openProjectModal(id = null) {
+    resetProjectForm();
+    populateSelects();
+    if (id != null) {
+      const p = DB.projects.find(x => x.id === id);
+      if (!p) return;
+      activeProject = p;
+      $('modalTitle').textContent = 'Edit Project';
+      $('deleteProject').classList.remove('hidden');
+      $('p_title').value = p.title || '';
+      $('p_desc').value = p.description || '';
+      $('p_category').value = p.category || DB.categories[0] || '';
+      $('p_importance').value = p.importance || 'High';
+      $('p_assignee').value = p.assignee || '';
+      $('p_type').value = p.type || 'DIY';
+      $('p_status').value = p.status || 'Planned';
+      $('p_duration_hours').value = p.durationHours || '';
+      $('p_duration_days').value = p.durationDays || '';
+      $('p_start').value = p.start || '';
+      $('p_end').value = p.end || '';
+      if (p.type === 'Contractor') {
+        $('contractorBlock').classList.remove('hidden');
+        $('diyOptions').classList.add('hidden');
+        $('p_contractor').value = p.contractor || '';
+        $('p_contract_terms').value = p.contract_terms || '';
+        $('p_contract_cost').value = p.contract_cost || '';
+        $('p_contract_duration').value = p.contract_duration || '';
+      } else {
+        $('diyOptions').classList.remove('hidden');
+        $('p_time_of_day').value = p.time_of_day || 'Either';
+        $('p_week_part').value = p.week_part || 'Either';
+      }
+      if (p.requiresMaterials) {
+        $('p_requiresMaterials').checked = true;
+        $('materialsBlock').classList.remove('hidden');
+        (p.materials || []).forEach(addMaterialRow);
+      }
+      recalcTotals();
+    }
+    $('projectModal').showModal();
+  }
+
+  function addMaterialRow(m = { item: '', qty: 1, cost: 0, store: '', purchased: false, inhouse: false }) {
+    const tr = document.createElement('tr');
+    tr.className = "hover:bg-gray-50";
+    tr.innerHTML = `
+      <td><input type="text" class="w-full text-sm border rounded-md px-2 py-1" value="${esc(m.item)}" placeholder="Item"></td>
+      <td><input type="number" class="w-16 text-center text-sm border rounded-md px-2 py-1" min="0" step="1" value="${m.qty}"></td>
+      <td><input type="number" class="w-24 text-sm border rounded-md px-2 py-1" min="0" step="0.01" value="${m.cost}"></td>
+      <td><input type="text" class="w-full text-sm border rounded-md px-2 py-1" value="${esc(m.store)}" placeholder="Store"></td>
+      <td class="text-center"><input type="checkbox" class="w-4 h-4" ${m.purchased ? 'checked' : ''}></td>
+      <td class="text-center"><input type="checkbox" class="w-4 h-4" ${m.inhouse ? 'checked' : ''}></td>
+      <td class="text-center"><button type="button" class="text-red-500 hover:text-red-700 font-semibold text-sm">Remove</button></td>`;
+    tr.addEventListener('input', recalcMaterials);
+    tr.querySelector('button').onclick = () => {
+      tr.remove();
+      recalcMaterials();
+    };
+    $('materialsBody').appendChild(tr);
+  }
+
+  function recalcMaterials() {
+    let subtotal = 0, needed = 0;
+    $$('tbody#materialsBody tr').forEach(tr => {
+      const ins = tr.querySelectorAll('input');
+      const qty = Number(ins[1].value) || 0,
+        cost = Number(ins[2].value) || 0;
+      const purchased = ins[3].checked,
+        inhouse = ins[4].checked;
+      const row = qty * cost;
+      subtotal += row;
+      if (!purchased && !inhouse) needed += row;
+    });
+    $('materialsSubtotal').textContent = money(subtotal);
+    $('materialsNeeded').textContent = money(needed);
+    recalcTotals();
+  }
+
+  function recalcTotals() {
+    let mats = 0;
+    $$('tbody#materialsBody tr').forEach(tr => {
+      const ins = tr.querySelectorAll('input');
+      mats += (Number(ins[1].value) || 0) * (Number(ins[2].value) || 0);
+    });
+    const con = Number($('p_contract_cost').value) || 0;
+    $('sumMaterials').textContent = money(mats);
+    $('sumContractor').textContent = money(con);
+    $('sumTotal').textContent = money(mats + con);
+  }
+
+  function collectProject() {
+    const title = $('p_title').value.trim();
+    const start = $('p_start').value;
+    const end = $('p_end').value;
+    if (!title) return { ok: false, msg: 'Please enter a title' };
+    if (!start || !end) return { ok: false, msg: 'Start and End dates are required' };
+    const type = $('p_type').value;
+    const data = {
+      title,
+      description: $('p_desc').value.trim(),
+      category: $('p_category').value,
+      importance: $('p_importance').value,
+      assignee: $('p_assignee').value,
+      type,
+      status: $('p_status').value,
+      durationHours: Number($('p_duration_hours').value) || 0,
+      durationDays: Number($('p_duration_days').value) || 0,
+      start,
+      end,
+      requiresMaterials: $('p_requiresMaterials').checked,
+      materials: []
+    };
+    if (type === 'DIY') {
+      data.time_of_day = $('p_time_of_day').value;
+      data.week_part = $('p_week_part').value;
+      data.contractor = '';
+      data.contract_terms = '';
+      data.contract_cost = 0;
+      data.contract_duration = '';
+    } else {
+      data.contractor = $('p_contractor').value;
+      data.contract_terms = $('p_contract_terms').value;
+      data.contract_cost = Number($('p_contract_cost').value) || 0;
+      data.contract_duration = $('p_contract_duration').value;
+    }
+    if (data.requiresMaterials) {
+      $$('tbody#materialsBody tr').forEach(tr => {
+        const [item, qty, cost, store, purchased, inhouse] = tr.querySelectorAll('input');
+        if (item.value.trim()) {
+          data.materials.push({
+            item: item.value.trim(),
+            qty: Number(qty.value) || 0,
+            cost: Number(cost.value) || 0,
+            store: store.value.trim(),
+            purchased: purchased.checked,
+            inhouse: inhouse.checked
+          });
+        }
+      });
+    }
+    return { ok: true, data };
+  }
+
+  function openContractorDetails(name) {
+    const d = DB.contractorDetails[name] || { company: '', phone: '', email: '', website: '', license: '', address: '', notes: '' };
+    $('cd_name').value = name || '';
+    $('cd_company').value = d.company || '';
+    $('cd_phone').value = d.phone || '';
+    $('cd_email').value = d.email || '';
+    $('cd_website').value = d.website || '';
+    $('cd_license').value = d.license || '';
+    $('cd_address').value = d.address || '';
+    $('cd_notes').value = d.notes || '';
+    $('contractorDetailModal').showModal();
+  }
+
+  async function saveContractorDetails() {
+    const name = $('cd_name').value.trim();
+    if (!name) {
+      showMessage('Name is required', true);
+      return;
+    }
+    DB.contractorDetails[name] = {
+      company: $('cd_company').value.trim(),
+      phone: $('cd_phone').value.trim(),
+      email: $('cd_email').value.trim(),
+      website: $('cd_website').value.trim(),
+      license: $('cd_license').value.trim(),
+      address: $('cd_address').value.trim(),
+      notes: $('cd_notes').value.trim()
+    };
+    if (!DB.contractors.includes(name)) DB.contractors.push(name);
+    await saveDirectories();
+    $('contractorDetailModal').close();
+  }
+
+  // ---------- Collapsible behavior ----------
+  function showList() {
+    $('calSection').classList.add('hidden');
+    $('listSection').classList.remove('hidden');
+    $('listSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function showCalendar() {
+    $('listSection').classList.add('hidden');
+    $('calSection').classList.remove('hidden');
+    renderCalendar();
+    $('calSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // ---------- First paint & Events ----------
+  function firstPaint() {
+    // Initial render based on local state before Firebase sync
+    populateSelects();
+    renderLists();
+
+    // header
+    $('newProjectBtn').onclick = () => openProjectModal();
+    $('directoriesBtn').onclick = openDirectories;
+    $('summaryBtn').onclick = openSummary;
+    $('exportBtn').onclick = () => {
+      const blob = new Blob([JSON.stringify(DB, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'home-projects.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    $('importInput').onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      showConfirm("Are you sure you want to import data? This will overwrite your current projects.", async (confirmed) => {
+        if (!confirmed) return;
+        try {
+          const data = JSON.parse(await file.text());
+          // Save imported data to Firestore
+          const projectsCollectionRef = collection(db, `/artifacts/${appId}/users/${userId}/projects`);
+          const directoriesDocRef = doc(db, `/artifacts/${appId}/users/${userId}/directories`, 'directories');
+          await runTransaction(db, async (transaction) => {
+            // Delete existing projects
+            const existingProjects = await getDocs(projectsCollectionRef);
+            existingProjects.forEach(doc => transaction.delete(doc.ref));
+
+            // Add new projects
+            (data.projects || []).forEach(p => {
+              const { id, ...projectData } = p;
+              transaction.set(doc(projectsCollectionRef, id.toString()), projectData);
+            });
+
+            // Set new directories
+            transaction.set(directoriesDocRef, {
+              people: data.people || [],
+              contractors: data.contractors || [],
+              stores: data.stores || [],
+              categories: data.categories || ['General'],
+              budgets: data.budgets || {},
+              contractorDetails: data.contractorDetails || {}
+            });
+          });
+          showMessage("Import successful! Your data will now sync.", false);
+        } catch (ex) {
+          console.error("Import failed:", ex);
+          showMessage("Import failed: " + ex.message, true);
+        }
+      });
+    };
+
+    // filters
+    $('search').oninput = (e) => {
+      filters.q = e.target.value;
+      renderList();
+    };
+    $('filterCategory').onchange = (e) => {
+      filters.category = e.target.value;
+      renderList();
+    };
+    $('filterAssignee').onchange = (e) => {
+      filters.assignee = e.target.value;
+      renderList();
+    };
+    $('filterType').onchange = (e) => {
+      filters.type = e.target.value;
+      renderList();
+    };
+    $('filterStatus').onchange = (e) => {
+      filters.status = e.target.value;
+      renderList();
+    };
+    $('clearFiltersBtn').onclick = () => {
+      Object.keys(filters).forEach(k => filters[k] = '');
+      $('search').value = '';
+      $('filterCategory').value = '';
+      $('filterAssignee').value = '';
+      $('filterType').value = '';
+      $('filterStatus').value = '';
+      renderList();
+    };
+
+    // calendar controls
+    $('prevMonthBtn').onclick = () => {
+      calRef = new Date(calRef.getFullYear(), calRef.getMonth() - 1, 1);
+      renderCalendar();
+    };
+    $('nextMonthBtn').onclick = () => {
+      calRef = new Date(calRef.getFullYear(), calRef.getMonth() + 1, 1);
+      renderCalendar();
+    };
+
+    // collapsibles
+    $('toggleCalendar').onclick = showCalendar;
+    $('toggleList').onclick = showList;
+    $('collapseList').onclick = () => {
+      $('listSection').classList.add('hidden');
+    };
+    $('collapseCal').onclick = () => {
+      $('calSection').classList.add('hidden');
+    };
+
+    // directories modal
+    $('closeDirectories').onclick = () => $('directoriesModal').close();
+    $('addPersonBtn').onclick = async () => {
+      const v = $('newPerson').value.trim();
+      if (v && !DB.people.includes(v)) {
+        DB.people.push(v);
+        $('newPerson').value = '';
+        await saveDirectories();
+      }
+    };
+    $('addContractorBtn').onclick = async () => {
+      const v = $('newContractor').value.trim();
+      if (v && !DB.contractors.includes(v)) {
+        DB.contractors.push(v);
+        $('newContractor').value = '';
+        await saveDirectories();
+      }
+    };
+    $('addStoreBtn').onclick = async () => {
+      const v = $('newStore').value.trim();
+      if (v && !DB.stores.includes(v)) {
+        DB.stores.push(v);
+        $('newStore').value = '';
+        await saveDirectories();
+      }
+    };
+    $('addCategoryBtn').onclick = async () => {
+      const v = prompt('New category');
+      if (v) {
+        if (!DB.categories.includes(v)) DB.categories.push(v);
+        await saveDirectories();
+        $('p_category').value = v;
+      }
+    };
+    $('categoryList').addEventListener('change', async (e) => {
+      const cat = e.target.dataset.bcat;
+      if (cat) {
+        DB.budgets[cat] = Number(e.target.value) || 0;
+        await saveDirectories();
+      }
+    });
+
+    // project modal internals
+    $('p_type').onchange = (e) => {
+      if (e.target.value === 'Contractor') {
+        $('contractorBlock').classList.remove('hidden');
+        $('diyOptions').classList.add('hidden');
+      } else {
+        $('contractorBlock').classList.add('hidden');
+        $('diyOptions').classList.remove('hidden');
+      }
+    };
+    $('p_requiresMaterials').onchange = (e) => {
+      $('materialsBlock').classList.toggle('hidden', !e.target.checked);
+      if (e.target.checked && !$('materialsBody').children.length) addMaterialRow();
+      recalcMaterials();
+    };
+    $('addMaterial').onclick = () => addMaterialRow();
+    $('p_contract_cost').oninput = recalcTotals;
+    $('addCat').onclick = async () => {
+      const v = prompt('New category');
+      if (v) {
+        if (!DB.categories.includes(v)) DB.categories.push(v);
+        await saveDirectories();
+        $('p_category').value = v;
+      }
+    };
+    $('addPerson').onclick = async () => {
+      const v = prompt('New person');
+      if (v) {
+        if (!DB.people.includes(v)) DB.people.push(v);
+        await saveDirectories();
+        $('p_assignee').value = v;
+      }
+    };
+    $('addContractor').onclick = async () => {
+      const v = prompt('New contractor/company');
+      if (v) {
+        if (!DB.contractors.includes(v)) DB.contractors.push(v);
+        await saveDirectories();
+        $('p_contractor').value = v;
+      }
+    };
+    $('openContractorDetail').onclick = () => openContractorDetails($('p_contractor').value.trim());
+
+    $('cancelProject').onclick = () => $('projectModal').close();
+    $('deleteProject').onclick = async () => {
+      showConfirm('Are you sure you want to delete this project?', async (confirmed) => {
+        if (!confirmed) return;
+        if (activeProject) {
+          try {
+            const docRef = doc(db, `/artifacts/${appId}/users/${userId}/projects`, activeProject.id);
+            await deleteDoc(docRef);
+            $('projectModal').close();
+          } catch (e) {
+            console.error("Failed to delete project:", e);
+            showMessage("Failed to delete project. Please try again.", true);
+          }
+        }
+      });
+    };
+
+    $('saveProject').onclick = async () => {
+      const res = collectProject();
+      if (!res.ok) return showMessage(res.msg, true);
+      try {
+        const projectsCollection = collection(db, `/artifacts/${appId}/users/${userId}/projects`);
+        if (activeProject) {
+          await setDoc(doc(projectsCollection, activeProject.id), res.data);
+        } else {
+          await addDoc(projectsCollection, res.data);
+        }
+        $('projectModal').close();
+      } catch (e) {
+        console.error("Failed to save project:", e);
+        showMessage("Failed to save project. Please try again.", true);
+      }
+    };
+
+    // summary modal
+    $('closeSummary').onclick = () => $('summaryModal').close();
+
+    // contractor details modal
+    $('cd_save').onclick = saveContractorDetails;
+    $('cd_cancel').onclick = () => $('contractorDetailModal').close();
+    
+    // images: show names only
+    $('p_images').addEventListener('change', (e) => {
+      $('p_imagePreview').innerHTML = '';
+      Array.from(e.target.files).slice(0, 12).forEach(f => {
+        const tag = document.createElement('span');
+        tag.className = 'bg-slate-200 text-slate-700 px-2 py-1 rounded-full text-xs';
+        tag.textContent = f.name;
+        $('p_imagePreview').appendChild(tag);
+      });
+    });
+  }
+
+  window.onload = () => {
+    initFirebase();
+  };
+</script>
+
+<body class="bg-gray-50 text-gray-800 font-sans antialiased">
+<div class="max-w-7xl mx-auto p-4 flex flex-col gap-4">
+
+  <!-- Header -->
+  <header class="bg-white rounded-2xl shadow-lg p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+    <div class="flex items-center gap-4">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-400 to-cyan-500"></div>
+      <h1 class="text-2xl font-bold tracking-tight">Home Projects</h1>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <span id="userIdDisplay" class="px-3 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-800"></span>
+      <button class="px-4 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors" id="newProjectBtn">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline-block -mt-0.5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clip-rule="evenodd" />
+        </svg>
+        New Project
+      </button>
+      <button class="px-4 py-2 bg-white text-gray-800 rounded-lg shadow-md border border-gray-200 hover:bg-gray-50 transition-colors" id="directoriesBtn">Directories</button>
+      <button class="px-4 py-2 bg-white text-gray-800 rounded-lg shadow-md border border-gray-200 hover:bg-gray-50 transition-colors" id="summaryBtn">Summary</button>
+      <button class="px-4 py-2 bg-white text-gray-800 rounded-lg shadow-md border border-gray-200 hover:bg-gray-50 transition-colors" id="exportBtn">Export</button>
+      <label class="px-4 py-2 bg-white text-gray-800 rounded-lg shadow-md border border-gray-200 hover:bg-gray-50 transition-colors cursor-pointer" for="importInput">Import</label>
+      <input id="importInput" type="file" accept="application/json" class="hidden">
+    </div>
+  </header>
+
+  <!-- Message & Error Banners -->
+  <div id="banner" class="hidden bg-yellow-100 text-yellow-800 border border-yellow-200 rounded-xl p-3 shadow-sm"></div>
+  <div id="err" class="hidden bg-red-100 text-red-800 border border-red-200 rounded-xl p-3 shadow-sm"></div>
+
+  <!-- Filters -->
+  <section class="bg-white rounded-2xl shadow-lg p-4">
+    <div class="flex flex-col sm:flex-row items-start sm:items-center flex-wrap gap-4">
+      <div class="flex-1 w-full sm:w-auto">
+        <label for="search" class="text-sm font-medium text-gray-500 sr-only">Search</label>
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-semibold text-gray-700">Search</span>
+          <input id="search" type="text" class="flex-1 w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow" placeholder="Title, description, assignee...">
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center gap-2 text-sm">
+        <span class="text-sm font-semibold text-gray-700">Category</span><select id="filterCategory" class="p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
+        <span class="text-sm font-semibold text-gray-700">Assignee</span><select id="filterAssignee" class="p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
+        <span class="text-sm font-semibold text-gray-700">Type</span>
+        <select id="filterType" class="p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"><option value="">All</option><option>DIY</option><option>Contractor</option></select>
+        <span class="text-sm font-semibold text-gray-700">Status</span>
+        <select id="filterStatus" class="p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"><option value="">All</option><option>Backlog</option><option>Planned</option><option>In-Progress</option><option>Blocked</option><option>Done</option></select>
+        <button class="px-4 py-2 bg-white text-gray-800 rounded-lg shadow-sm border border-gray-200 hover:bg-gray-50 transition-colors" id="clearFiltersBtn">Clear</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- LIST -->
+  <section id="listSection" class="bg-white rounded-2xl shadow-lg overflow-hidden">
+    <div class="flex items-center justify-between p-4 bg-gray-50 border-b border-gray-200 flex-wrap gap-2">
+      <h3 class="text-lg font-semibold text-gray-800">Project List</h3>
+      <div class="flex items-center gap-2 flex-wrap">
+        <div id="stats" class="flex items-center gap-2"></div>
+        <button class="px-3 py-1 bg-gray-200 text-gray-700 rounded-full text-sm font-medium hover:bg-gray-300" id="toggleCalendar">Show Calendar</button>
+        <button class="px-3 py-1 bg-gray-200 text-gray-700 rounded-full text-sm font-medium hover:bg-gray-300" id="collapseList">Hide</button>
+      </div>
+    </div>
+    <div class="overflow-x-auto p-4">
+      <table class="min-w-full text-left border-collapse">
+        <thead class="sticky top-0 bg-white">
+          <tr class="text-xs text-gray-500 uppercase tracking-wider">
+            <th class="py-2 px-4 whitespace-nowrap">Title</th>
+            <th class="py-2 px-4 text-center">Category</th>
+            <th class="py-2 px-4 text-center">Status</th>
+            <th class="py-2 px-4 text-center">Type</th>
+            <th class="py-2 px-4 text-center">Assignee</th>
+            <th class="py-2 px-4 text-center">Start</th>
+            <th class="py-2 px-4 text-center">End</th>
+            <th class="py-2 px-4 text-right">Materials</th>
+            <th class="py-2 px-4 text-right">Needed</th>
+            <th class="py-2 px-4 text-right">Contractor</th>
+            <th class="py-2 px-4 text-right">Total</th>
+          </tr>
+        </thead>
+        <tbody id="listBody" class="divide-y divide-gray-200"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- CALENDAR -->
+  <section id="calSection" class="bg-white rounded-2xl shadow-lg p-4 hidden">
+    <div class="flex items-center justify-between pb-4 border-b border-gray-200 flex-wrap gap-2">
+      <h3 class="text-lg font-semibold text-gray-800">Calendar</h3>
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="px-3 py-1 rounded-full text-xs font-semibold text-green-700 bg-green-100">DIY = green</span>
+        <span class="px-3 py-1 rounded-full text-xs font-semibold text-blue-700 bg-blue-100">Contractor = blue</span>
+        <button class="px-3 py-1 bg-gray-200 text-gray-700 rounded-full text-sm font-medium hover:bg-gray-300" id="toggleList">Show List</button>
+        <button class="px-3 py-1 bg-gray-200 text-gray-700 rounded-full text-sm font-medium hover:bg-gray-300" id="collapseCal">Hide</button>
+      </div>
+    </div>
+    <div class="pt-4">
+      <div class="flex items-center justify-end gap-2 mb-2 flex-wrap">
+        <button class="p-2 rounded-full text-gray-600 hover:bg-gray-200 transition-colors" id="prevMonthBtn">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>
+        </button>
+        <span id="calTitle" class="px-3 py-1 rounded-full text-sm font-semibold bg-gray-100 text-gray-800"></span>
+        <button class="p-2 rounded-full text-gray-600 hover:bg-gray-200 transition-colors" id="nextMonthBtn">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" /></svg>
+        </button>
+      </div>
+      <div class="grid grid-cols-7 gap-2" id="calDow"></div>
+      <div class="grid grid-cols-7 gap-2 mt-2" id="calGrid"></div>
+    </div>
+  </section>
+</div>
+
+<!-- Project Modal -->
+<dialog id="projectModal" class="p-6 rounded-2xl shadow-xl backdrop:bg-slate-900/50 w-[96vw] max-w-4xl">
+  <form id="projectForm" novalidate>
+    <div class="grid lg:grid-cols-2 gap-6">
+      <div class="col-span-2 lg:col-span-1">
+        <h2 id="modalTitle" class="text-2xl font-bold mb-4">New Project</h2>
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700">Title</label>
+          <input id="p_title" type="text" required placeholder="e.g., Replace faucet" class="mt-1 w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700">Description</label>
+          <textarea id="p_desc" class="mt-1 w-full p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[80px]"></textarea>
+        </div>
+
+        <div class="grid sm:grid-cols-3 gap-4 mb-4">
+          <div class="flex flex-col">
+            <label class="block text-sm font-medium text-gray-700">Category</label>
+            <div class="flex gap-2 items-center mt-1">
+              <select id="p_category" class="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
+              <button type="button" id="addCat" class="p-2 text-blue-600 hover:text-blue-800 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clip-rule="evenodd" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="flex flex-col">
+            <label class="block text-sm font-medium text-gray-700">Importance</label>
+            <select id="p_importance" class="mt-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option>Low</option><option>Medium</option><option selected>High</option><option>Critical</option>
+            </select>
+          </div>
+          <div class="flex flex-col">
+            <label class="block text-sm font-medium text-gray-700">Assignee</label>
+            <div class="flex gap-2 items-center mt-1">
+              <select id="p_assignee" class="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
+              <button type="button" id="addPerson" class="p-2 text-blue-600 hover:text-blue-800 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fill-rule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clip-rule="evenodd" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="grid sm:grid-cols-3 gap-4 mb-4">
+          <div class="flex flex-col">
+            <label class="block text-sm font-medium text-gray-700">Type</label>
+            <select id="p_type" class="mt-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option>DIY</option><option>Contractor</option>
+            </select>
+          </div>
+          <div class="flex flex-col">
+            <label class="block text-sm font-medium text-gray-700">Status</label>
+            <select id="p_status" class="mt-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option>Backlog</option><option selected>Planned</option><option>In-Progress</option><option>Blocked</option><option>Done</option>
+            </select>
+          </div>
+          <div class="flex flex-col">
+            <label class="block text-sm font-medium text-gray-700">Duration (optional)</label>
+            <div class="flex gap-2 mt-1">
+              <input id="p_duration_hours" class="w-20 p-2 border border-gray-300 rounded-lg text-center text-sm" type="number" step="0.5" min="0" placeholder="hrs">
+              <input id="p_duration_days" class="w-20 p-2 border border-gray-300 rounded-lg text-center text-sm" type="number" step="1" min="0" placeholder="days">
+            </div>
+          </div>
+        </div>
+
+        <div id="diyOptions" class="grid sm:grid-cols-3 gap-4 mb-4">
+          <div class="flex flex-col">
+            <label class="block text-sm font-medium text-gray-700">DIY Time of Day</label>
+            <select id="p_time_of_day" class="mt-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option>Either</option><option>Day</option><option>Night</option>
+            </select>
+          </div>
+          <div class="flex flex-col">
+            <label class="block text-sm font-medium text-gray-700">DIY Week Part</label>
+            <select id="p_week_part" class="mt-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option>Either</option><option>Weekday</option><option>Weekend</option>
+            </select>
+          </div>
+          <div class="flex flex-col">
+            <label class="block text-sm font-medium text-gray-700">Schedule <span class="text-red-500">*</span></label>
+            <div class="flex gap-2 mt-1">
+              <input id="p_start" type="date" required class="flex-1 p-2 border border-gray-300 rounded-lg text-sm">
+              <input id="p_end" type="date" required class="flex-1 p-2 border border-gray-300 rounded-lg text-sm">
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 mb-4">
+          <input id="p_requiresMaterials" type="checkbox" class="h-4 w-4 text-blue-600 rounded">
+          <label for="p_requiresMaterials" class="text-sm font-medium text-gray-700">Requires materials</label>
+        </div>
+
+        <div id="materialsBlock" class="bg-gray-50 rounded-lg p-4 hidden">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-xs text-gray-500 uppercase">
+                <th class="py-2 px-1 text-left">Item</th><th class="py-2 px-1 text-center">Qty</th><th class="py-2 px-1 text-center">Unit $</th><th class="py-2 px-1 text-left">Store</th><th class="py-2 px-1 text-center">Purchased</th><th class="py-2 px-1 text-center">In‑house</th><th class="py-2 px-1"></th>
+              </tr>
+            </thead>
+            <tbody id="materialsBody" class="divide-y divide-gray-200"></tbody>
+          </table>
+          <div class="flex items-center justify-between gap-4 mt-4">
+            <button type="button" id="addMaterial" class="text-sm text-blue-600 font-semibold hover:text-blue-800 transition-colors">+ Add Material</button>
+            <div class="flex items-center gap-2 text-sm font-semibold">
+              <span class="text-gray-600">Subtotal:</span><b id="materialsSubtotal">$0.00</b>
+              <span class="text-gray-600">Needed:</span><b id="materialsNeeded">$0.00</b>
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700">Images</label>
+          <input id="p_images" type="file" accept="image/*" multiple class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+          <div id="p_imagePreview" class="flex flex-wrap gap-2 mt-2"></div>
+        </div>
+      </div>
+
+      <div class="col-span-2 lg:col-span-1 border-t lg:border-t-0 lg:border-l border-gray-200 lg:pl-6 pt-6 lg:pt-0">
+        <h3 class="text-lg font-semibold mb-4">Contractor</h3>
+        <div id="contractorBlock" class="hidden">
+          <div class="flex gap-2 items-center mb-4">
+            <select id="p_contractor" class="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"></select>
+            <button type="button" id="addContractor" class="p-2 text-blue-600 hover:text-blue-800 transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z" clip-rule="evenodd" />
+              </svg>
+            </button>
+            <button type="button" id="openContractorDetail" class="px-3 py-1 bg-white text-gray-800 rounded-lg shadow-sm border border-gray-200 hover:bg-gray-50 transition-colors text-sm">Details</button>
+          </div>
+          <div class="grid sm:grid-cols-3 gap-4">
+            <input id="p_contract_terms" class="p-2 border border-gray-300 rounded-lg text-sm" type="text" placeholder="Notes / terms">
+            <input id="p_contract_cost" class="p-2 border border-gray-300 rounded-lg text-sm" type="number" step="0.01" placeholder="Cost $">
+            <input id="p_contract_duration" class="p-2 border border-gray-300 rounded-lg text-sm" type="text" placeholder="Duration (hrs/days)">
+          </div>
+        </div>
+
+        <h3 class="text-lg font-semibold mt-6 mb-2">Totals</h3>
+        <div class="flex flex-wrap gap-2 text-sm font-semibold">
+          <span class="px-3 py-1 rounded-full text-gray-700 bg-gray-100">Materials: <b id="sumMaterials">$0.00</b></span>
+          <span class="px-3 py-1 rounded-full text-gray-700 bg-gray-100">Contractor: <b id="sumContractor">$0.00</b></span>
+          <span class="px-3 py-1 rounded-full text-gray-700 bg-gray-100">Total: <b id="sumTotal">$0.00</b></span>
+        </div>
+
+        <div class="flex justify-end gap-2 mt-6">
+          <button type="button" id="deleteProject" class="px-4 py-2 bg-red-500 text-white rounded-lg shadow-md hover:bg-red-600 transition-colors hidden">Delete</button>
+          <button type="button" id="cancelProject" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg shadow-md hover:bg-gray-300 transition-colors">Cancel</button>
+          <button type="button" id="saveProject" class="px-4 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors">Save</button>
+        </div>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<!-- Directories Modal -->
+<dialog id="directoriesModal" class="p-6 rounded-2xl shadow-xl backdrop:bg-slate-900/50 w-[96vw] max-w-4xl">
+  <div class="flex flex-col gap-4">
+    <h2 class="text-2xl font-bold">Directories</h2>
+    <p class="text-gray-500 -mt-2">Manage People, Contractors, Stores, and Categories (with budgets).</p>
+    <div class="grid sm:grid-cols-2 gap-4">
+      <div>
+        <h3 class="text-lg font-semibold">People</h3>
+        <div class="flex gap-2 mt-2"><input id="newPerson" class="flex-1 p-2 border rounded-lg text-sm" placeholder="Name"><button id="addPersonBtn" class="px-3 py-1 bg-blue-600 text-white rounded-lg shadow-sm hover:bg-blue-700 transition-colors text-sm">Add</button></div>
+        <div id="peopleList" class="flex flex-wrap gap-2 p-2 mt-2 border border-gray-200 rounded-lg min-h-[50px]"></div>
+      </div>
+      <div>
+        <h3 class="text-lg font-semibold">Contractors</h3>
+        <div class="flex gap-2 mt-2"><input id="newContractor" class="flex-1 p-2 border rounded-lg text-sm" placeholder="Name"><button id="addContractorBtn" class="px-3 py-1 bg-blue-600 text-white rounded-lg shadow-sm hover:bg-blue-700 transition-colors text-sm">Add</button></div>
+        <div id="contractorList" class="flex flex-wrap gap-2 p-2 mt-2 border border-gray-200 rounded-lg min-h-[50px]"></div>
+      </div>
+      <div>
+        <h3 class="text-lg font-semibold">Stores</h3>
+        <div class="flex gap-2 mt-2"><input id="newStore" class="flex-1 p-2 border rounded-lg text-sm" placeholder="Store"><button id="addStoreBtn" class="px-3 py-1 bg-blue-600 text-white rounded-lg shadow-sm hover:bg-blue-700 transition-colors text-sm">Add</button></div>
+        <div id="storeList" class="flex flex-wrap gap-2 p-2 mt-2 border border-gray-200 rounded-lg min-h-[50px]"></div>
+      </div>
+      <div>
+        <h3 class="text-lg font-semibold">Categories & Budgets</h3>
+        <div class="flex gap-2 mt-2"><input id="newCategory" class="flex-1 p-2 border rounded-lg text-sm" placeholder="Category"><button id="addCategoryBtn" class="px-3 py-1 bg-blue-600 text-white rounded-lg shadow-sm hover:bg-blue-700 transition-colors text-sm">Add</button></div>
+        <div id="categoryList" class="flex flex-col gap-2 p-2 mt-2 border border-gray-200 rounded-lg min-h-[50px]"></div>
+      </div>
+    </div>
+    <div class="flex justify-end mt-4"><button class="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg shadow-md hover:bg-gray-300 transition-colors" id="closeDirectories">Close</button></div>
+  </div>
+</dialog>
+
+<!-- Summary Modal -->
+<dialog id="summaryModal" class="p-6 rounded-2xl shadow-xl backdrop:bg-slate-900/50 w-[96vw] max-w-4xl">
+  <div class="flex flex-col gap-4">
+    <h2 class="text-2xl font-bold">Summary & Budgets</h2>
+    <div id="summaryContent" class="bg-gray-50 rounded-lg p-4 shadow-inner"></div>
+    <div class="flex justify-end"><button id="closeSummary" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg shadow-md hover:bg-gray-300 transition-colors">Close</button></div>
+  </div>
+</dialog>
+
+<!-- Contractor Details Modal -->
+<dialog id="contractorDetailModal" class="p-6 rounded-2xl shadow-xl backdrop:bg-slate-900/50 w-[96vw] max-w-2xl">
+  <div class="flex flex-col gap-4">
+    <h2 class="text-2xl font-bold">Contractor Details</h2>
+    <div class="grid sm:grid-cols-2 gap-4">
+      <div><label class="block text-sm font-medium text-gray-700">Name</label><input id="cd_name" type="text" class="mt-1 w-full p-2 border rounded-lg text-sm"></div>
+      <div><label class="block text-sm font-medium text-gray-700">Company</label><input id="cd_company" type="text" class="mt-1 w-full p-2 border rounded-lg text-sm"></div>
+      <div><label class="block text-sm font-medium text-gray-700">Phone</label><input id="cd_phone" type="text" class="mt-1 w-full p-2 border rounded-lg text-sm"></div>
+      <div><label class="block text-sm font-medium text-gray-700">Email</label><input id="cd_email" type="text" class="mt-1 w-full p-2 border rounded-lg text-sm"></div>
+      <div><label class="block text-sm font-medium text-gray-700">Website</label><input id="cd_website" type="text" class="mt-1 w-full p-2 border rounded-lg text-sm"></div>
+      <div><label class="block text-sm font-medium text-gray-700">License/Insurance</label><input id="cd_license" type="text" class="mt-1 w-full p-2 border rounded-lg text-sm"></div>
+      <div class="sm:col-span-2"><label class="block text-sm font-medium text-gray-700">Address</label><input id="cd_address" type="text" class="mt-1 w-full p-2 border rounded-lg text-sm"></div>
+      <div class="sm:col-span-2"><label class="block text-sm font-medium text-gray-700">Notes</label><textarea id="cd_notes" class="mt-1 w-full p-2 border rounded-lg text-sm min-h-[80px]"></textarea></div>
+    </div>
+    <div class="flex justify-end gap-2 mt-4">
+      <button class="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg shadow-md hover:bg-gray-300 transition-colors" id="cd_cancel">Close</button>
+      <button class="px-4 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors" id="cd_save">Save</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Custom Message Modal -->
+<dialog id="messageModal" class="p-6 rounded-2xl shadow-xl backdrop:bg-slate-900/50">
+  <div class="flex flex-col gap-4">
+    <h3 id="messageTitle" class="text-xl font-bold"></h3>
+    <p id="messageContent" class="text-gray-700"></p>
+    <div class="flex justify-end">
+      <button class="px-4 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700" onclick="this.closest('dialog').close()">OK</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- Custom Confirm Modal -->
+<dialog id="confirmModal" class="p-6 rounded-2xl shadow-xl backdrop:bg-slate-900/50">
+  <div class="flex flex-col gap-4">
+    <h3 class="text-xl font-bold">Confirm Action</h3>
+    <p id="confirmContent" class="text-gray-700"></p>
+    <div class="flex justify-end gap-2">
+      <button id="cancelConfirmBtn" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg shadow-md hover:bg-gray-300">Cancel</button>
+      <button id="confirmBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700">Confirm</button>
+    </div>
+  </div>
+</dialog>
+
+</body>
+</html>
