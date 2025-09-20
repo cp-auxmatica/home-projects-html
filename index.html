@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Home Project Planner</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Pacifico&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js'></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+
+    <style>
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background-color: #f0f2f5;
+        }
+        .planner-title { font-family: 'Pacifico', cursive; }
+        .page-view { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .nav-icon.active i { color: #3b82f6; }
+        .nav-icon.active::after { 
+            content: ''; 
+            position: absolute; 
+            bottom: -8px; 
+            left: 50%; 
+            transform: translateX(-50%); 
+            width: 24px; 
+            height: 4px; 
+            background-color: #3b82f6; 
+            border-radius: 2px; 
+        }
+
+        ul, ol, li {
+            list-style: none;
+            list-style-type: none;
+            margin: 0;
+            padding: 0;
+        }
+        .list-item::before, .list-item::after, div::before, div::after {
+            content: none !important;
+        }
+        
+        .kanban-column { min-height: 200px; }
+        .fc-event { cursor: pointer; border: none !important; }
+        .sortable-ghost { background: #f0f0f0; border: 2px dashed #ccc; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .color-swatch { width: 20px; height: 20px; border-radius: 50%; cursor: pointer; border: 2px solid white; box-shadow: 0 0 0 1px rgba(0,0,0,0.2); }
+        .list-item { transition: background-color 0.2s; cursor: pointer; }
+        .list-item:hover { background-color: #f8fafc; }
+        .toast {
+            position: fixed;
+            bottom: 1.5rem;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            padding: 0.75rem 1.25rem;
+            border-radius: 0.5rem;
+            color: white;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+    </style>
+</head>
+<body class="antialiased text-gray-800">
+
+    <div id="app" class="max-w-7xl mx-auto p-4 md:p-6" style="display: none;">
+        
+        <header class="mb-4 flex flex-wrap justify-between items-center gap-4">
+            <h1 class="planner-title text-4xl text-orange-500">hub</h1><h2 class="text-black-200">HOME PROJECT PLANNER</h2>
+            <div class="flex items-center gap-2">
+                <input type="text" id="searchInput" placeholder="Search projects..." class="block w-full border-gray-300 rounded-md shadow-sm p-2 border">
+                <button onclick="app.openNewProjectForm()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg flex items-center whitespace-nowrap"><i data-lucide="plus" class="w-5 h-5 mr-2"></i>New Project</button>
+                <button onclick="openModal('settingsModal')" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg"><i data-lucide="settings" class="w-5 h-5"></i></button>
+            </div>
+        </header>
+
+        <nav class="bg-white rounded-2xl shadow-md p-2 my-6 sticky top-4 z-10">
+            <div class="flex justify-around items-center">
+                 <button class="nav-icon relative p-2" data-view="kanban" onclick="app.setView('kanban')"><i data-lucide="layout-grid" class="text-gray-500 w-7 h-7"></i></button>
+                 <button class="nav-icon relative p-2" data-view="list" onclick="app.setView('list')"><i data-lucide="list" class="text-gray-500 w-7 h-7"></i></button>
+                 <button class="nav-icon relative p-2" data-view="calendar" onclick="app.setView('calendar')"><i data-lucide="calendar-days" class="text-gray-500 w-7 h-7"></i></button>
+                 <button class="nav-icon relative p-2" data-view="reports" onclick="app.setView('reports')"><i data-lucide="pie-chart" class="text-gray-500 w-7 h-7"></i></button>
+                 <button class="nav-icon relative p-2" data-view="assignments" onclick="app.setView('assignments')"><i data-lucide="users" class="text-gray-500 w-7 h-7"></i></button>
+            </div>
+        </nav>
+
+        <main>
+            <div id="kanban-view" class="page-view grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
+            <div id="list-view" class="page-view bg-white p-5 rounded-xl shadow-md"></div>
+            <div id="calendar-view" class="page-view bg-white p-4 rounded-xl shadow-md"><div id="calendar"></div></div>
+            <div id="reports-view" class="page-view bg-white p-5 rounded-xl shadow-md"></div>
+            <div id="assignments-view" class="page-view grid grid-cols-1 lg:grid-cols-3 gap-6"></div>
+        </main>
+    </div>
+    
+    <div id="loading" class="text-center p-20"><p class="mt-4 text-gray-600 text-xl">Connecting to Firebase...</p></div>
+    <div id="toastContainer"></div>
+
+    <div id="projectModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 hidden z-50">
+        <div class="bg-white rounded-lg p-6 shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+            <h3 class="text-2xl font-bold mb-6 flex-shrink-0" id="projectModalTitle">New Project</h3>
+            <form id="projectForm" class="space-y-4 flex-grow overflow-y-auto pr-2">
+                <input type="hidden" id="projectId">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div><label class="block text-sm font-medium text-gray-700 mb-1">Project Name</label><input type="text" id="projectName" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border" required></div>
+                    <div><label class="block text-sm font-medium text-gray-700 mb-1">Status</label><select id="projectStatus" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border"><option>Not Started</option><option>In Progress</option><option>Blocked</option><option>Done</option></select></div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div><label class="block text-sm font-medium text-gray-700 mb-1">Priority</label><select id="projectPriority" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border"><option value="3">Low</option><option value="2">Medium</option><option value="1">High</option></select></div>
+                    <div><label class="block text-sm font-medium text-gray-700 mb-1">Project Size</label><select id="projectSize" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border"><option>Quick Fix</option><option>Small</option><option>Medium</option><option>Big</option><option>Overhaul</option></select></div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                     <div><label class="block text-sm font-medium text-gray-700 mb-1">Start Date</label><input type="date" id="projectStartDate" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border"></div>
+                    <div><label class="block text-sm font-medium text-gray-700 mb-1">End Date</label><input type="date" id="projectEndDate" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border"></div>
+                </div>
+                <div class="flex gap-6 items-center"><span class="text-sm font-medium text-gray-700">Project Type:</span><label class="flex items-center gap-2"><input type="radio" name="projectType" value="DIY" id="projectTypeDIY" class="h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500" checked><span>DIY</span></label><label class="flex items-center gap-2"><input type="radio" name="projectType" value="Contractor" id="projectTypeContractor" class="h-4 w-4 text-blue-600 border-gray-300 focus:ring-blue-500"><span>Contractor</span></label></div>
+                
+                <div id="contractorSection" class="hidden space-y-2 p-4 border rounded-md"><label class="block text-sm font-medium text-gray-700 mb-1">Select Contractor</label><select id="projectContractor" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border"></select><label class="block text-sm font-medium text-gray-700 mb-1">Quoted Cost</label><input type="number" id="projectQuote" placeholder="0.00" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border"></div>
+                
+                <div id="diySection" class="space-y-4 p-4 border rounded-md">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div><label class="block text-sm font-medium text-gray-700 mb-1">Assigned Family Members</label><div id="projectFamilyMembers" class="flex flex-wrap gap-x-4 gap-y-1"></div></div>
+                        <div><label class="block text-sm font-medium text-gray-700 mb-1">Total Est. Hours</label><input type="number" id="projectHours" placeholder="0" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border"></div>
+                    </div>
+                    <div class="border-t border-gray-200"></div>
+                    <div><h4 class="font-bold">Materials Needed</h4><div id="materialsList" class="space-y-2 mt-2"></div><button type="button" id="addMaterialBtn" class="text-sm text-blue-600 hover:underline mt-2 flex items-center"><i data-lucide="plus" class="w-4 h-4 mr-1"></i>Add Material</button></div>
+                    <div class="border-t border-gray-200"></div>
+                    <div>
+                        <h4 class="font-bold">Subtasks</h4>
+                        <div id="subtasksContainer" class="space-y-3 mt-2"></div>
+                        <button type="button" id="addSubtaskBtn" class="text-sm text-blue-600 hover:underline mt-2 flex items-center"><i data-lucide="plus" class="w-4 h-4 mr-1"></i>Add Subtask</button>
+                    </div>
+                </div>
+
+                <div><label class="block text-sm font-medium text-gray-700 mb-1">Notes</label><textarea id="projectNotes" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border" rows="3"></textarea></div>
+                
+                <div class="flex justify-between items-center pt-4 mt-4 border-t border-gray-200 flex-shrink-0">
+                    <button type="button" id="deleteProjectBtn" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg" style="display:none;">Delete</button>
+                    <div class="space-x-4">
+                        <button type="button" id="cancelProjectBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg">Cancel</button>
+                        <button type="submit" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg">Save Changes</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <div id="settingsModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 hidden z-50">
+        <div class="bg-white rounded-lg p-6 shadow-xl w-full max-w-5xl">
+            <h3 class="font-bold text-2xl mb-6">Manage Lists & Data</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div><h4 class="font-semibold text-lg mb-2 flex items-center"><i data-lucide="users" class="w-5 h-5 mr-2"></i>Family</h4><ul id="familyList" class="space-y-1 mb-2"></ul><div class="flex gap-2"><input id="newFamilyMember" type="text" placeholder="New name" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border"/><button onclick="app.addListItem('family')" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-3 rounded-lg">Add</button></div></div>
+                <div><h4 class="font-semibold text-lg mb-2 flex items-center"><i data-lucide="hard-hat" class="w-5 h-5 mr-2"></i>Contractors</h4><ul id="contractorList" class="space-y-1 mb-2"></ul><div class="flex gap-2"><input id="newContractorName" type="text" placeholder="Company Name" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border"/><button onclick="app.addListItem('contractors')" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-3 rounded-lg">Add</button></div></div>
+                <div><h4 class="font-semibold text-lg mb-2 flex items-center"><i data-lucide="store" class="w-5 h-5 mr-2"></i>Suppliers</h4><ul id="supplierList" class="space-y-1 mb-2"></ul><div class="flex gap-2"><input id="newSupplierName" type="text" placeholder="Store Name" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border"/><button onclick="app.addListItem('suppliers')" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-3 rounded-lg">Add</button></div></div>
+            </div>
+            <div class="border-t my-6"></div>
+            <h4 class="font-semibold text-lg mb-4">Data Management</h4>
+            <div class="p-4 bg-gray-100 rounded-lg flex flex-wrap gap-4 justify-center">
+                <button class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-lg flex items-center" onclick="app.exportData()"><i data-lucide="download" class="w-5 h-5 mr-2"></i>Export Data</button>
+                <button class="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg flex items-center" onclick="document.getElementById('importFile').click()"><i data-lucide="upload" class="w-5 h-5 mr-2"></i>Import Data</button>
+                <input type="file" id="importFile" accept="application/json" class="hidden" onchange="app.importData(event)">
+            </div>
+            <div class="mt-6 text-right">
+                 <button type="button" onclick="closeModal('settingsModal')" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg">Close</button>
+            </div>
+        </div>
+    </div>
+
+
+<script type="module">
+// --- Firebase SDKs ---
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+import { getFirestore, collection, doc, addDoc, setDoc, deleteDoc, onSnapshot, getDocs, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+// --- GLOBAL HELPER FUNCTIONS --- //
+window.openModal = (id) => document.getElementById(id).classList.remove('hidden');
+window.closeModal = (id) => document.getElementById(id).classList.add('hidden');
+
+// ========================================================
+// --- FIREBASE DATABASE LAYER                          ---
+// ========================================================
+const db = {
+    _db: null,
+    _auth: null,
+    _userId: null,
+    _appId: 'home-project-planner',
+    
+    async init() {
+        // Use globally provided config if available
+        const firebaseConfig = typeof __firebase_config !== 'undefined' 
+            ? JSON.parse(__firebase_config)
+            : {
+                apiKey: "AIzaSyCUDhmVElLjp2Wx4yw1LUnPMR93PCVXRxM",
+                authDomain: "home-projects-50c9f.firebaseapp.com",
+                projectId: "home-projects-50c9f",
+                storageBucket: "home-projects-50c9f.firebasestorage.app",
+                messagingSenderId: "91461508366",
+                appId: "1:91461508366:web:dd36e0ff417c569eb3cb5f"
+              };
+        
+        const firebaseApp = initializeApp(firebaseConfig);
+        this._db = getFirestore(firebaseApp);
+        this._auth = getAuth(firebaseApp);
+        this._appId = typeof __app_id !== 'undefined' ? __app_id : 'home-project-planner';
+
+        return new Promise((resolve, reject) => {
+            const unsub = this._auth.onAuthStateChanged(async user => {
+                unsub(); // Unsubscribe after first auth state change
+                if (user) {
+                    this._userId = user.uid;
+                    resolve();
+                } else {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined') {
+                            await signInWithCustomToken(this._auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(this._auth);
+                        }
+                        this._userId = this._auth.currentUser.uid;
+                        resolve();
+                    } catch (error) {
+                        console.error("Firebase sign-in error:", error);
+                        reject(error);
+                    }
+                }
+            });
+        });
+    },
+
+    _getCollectionRef(collectionName) {
+        if (!this._userId) throw new Error("User not authenticated.");
+        return collection(this._db, 'artifacts', this._appId, 'users', this._userId, collectionName);
+    },
+
+    listen(collectionName, callback) {
+        const collRef = this._getCollectionRef(collectionName);
+        return onSnapshot(collRef, (snapshot) => {
+            const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            callback(data);
+        }, (error) => {
+            console.error(`Error listening to ${collectionName}:`, error);
+        });
+    },
+    
+    async add(collectionName, item) {
+        const collRef = this._getCollectionRef(collectionName);
+        return await addDoc(collRef, item);
+    },
+
+    async put(collectionName, item) {
+        if (!item.id) throw new Error("Item must have an ID to be put.");
+        const docRef = doc(this._getCollectionRef(collectionName), item.id);
+        return await setDoc(docRef, item);
+    },
+
+    async delete(collectionName, key) {
+        const docRef = doc(this._getCollectionRef(collectionName), key);
+        return await deleteDoc(docRef);
+    },
+    
+    async getAll(collectionName) {
+        const querySnapshot = await getDocs(this._getCollectionRef(collectionName));
+        return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    },
+
+    async clearAndImport(data) {
+        const collections = ['projects', 'family', 'contractors', 'suppliers'];
+        const batch = writeBatch(this._db);
+
+        // Clear existing data
+        for (const coll of collections) {
+            const snapshot = await getDocs(this._getCollectionRef(coll));
+            snapshot.docs.forEach(doc => batch.delete(doc.ref));
+        }
+        await batch.commit();
+
+        // Import new data
+        const importBatch = writeBatch(this._db);
+        for (const coll of collections) {
+            if (data[coll]) {
+                data[coll].forEach(item => {
+                    const docRef = item.id ? doc(this._getCollectionRef(coll), item.id) : doc(this._getCollectionRef(coll));
+                    importBatch.set(docRef, item);
+                });
+            }
+        }
+        await importBatch.commit();
+    }
+};
+
+
+// ========================================================
+// --- CORE APPLICATION LOGIC                             ---
+// ========================================================
+const app = {
+    state: { activeView: 'kanban', projects: [], family: [], contractors: [], suppliers: [], editingProjectId: null, showDoneInList: true, searchQuery: '', listFilter: 'All' },
+    statusColors: { "Not Started": 'bg-slate-400', "In Progress": 'bg-blue-500', "Blocked": 'bg-red-500', "Done": 'bg-green-500' },
+    sizeBadgeClasses: { "Quick Fix": 'bg-gray-100 text-gray-800', "Small": 'bg-blue-100 text-blue-800', "Medium": 'bg-green-100 text-green-800', "Big": 'bg-yellow-100 text-yellow-800', "Overhaul": 'bg-red-100 text-red-800' },
+    colorPalette: ['#3b82f6', '#10b981', '#f97316', '#8b5cf6', '#ef4444', '#f59e0b', '#14b8a6', '#6366f1'],
+    unsubscribers: [],
+
+    async init() {
+        try {
+            await db.init();
+            
+            this.unsubscribers.forEach(unsub => unsub()); // Clear existing listeners if re-initializing
+            this.unsubscribers = [];
+
+            const collectionsToSync = ['projects', 'family', 'contractors', 'suppliers'];
+            collectionsToSync.forEach(name => {
+                const unsub = db.listen(name, (data) => {
+                    this.state[name] = data;
+                    this.render();
+                });
+                this.unsubscribers.push(unsub);
+            });
+            
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('app').style.display = 'block';
+            this.addEventListeners();
+            lucide.createIcons();
+        } catch (error) {
+            console.error("Init failed:", error);
+            document.getElementById('loading').innerHTML = `<p class="text-red-500">Error: Could not connect to the database.</p>`;
+        }
+    },
+    
+    addEventListeners() {
+        // This function is now designed to be idempotent (safe to call multiple times)
+        if (this.eventListenersAdded) return;
+        
+        document.querySelector('#projectForm').addEventListener('submit', this.saveProject.bind(this));
+        document.querySelector('#addMaterialBtn').addEventListener('click', () => this.addMaterialRow());
+        document.querySelector('#addSubtaskBtn').addEventListener('click', () => this.addSubtaskRow());
+        document.querySelectorAll('input[name="projectType"]').forEach(radio => radio.addEventListener('change', this.handleProjectTypeChange.bind(this)));
+        document.getElementById('searchInput').addEventListener('input', (e) => { this.state.searchQuery = e.target.value; this.render(); });
+        document.getElementById('cancelProjectBtn').addEventListener('click', () => closeModal('projectModal'));
+        document.getElementById('projectModal').addEventListener('click', (e) => { if(e.target.id === 'projectModal') closeModal('projectModal'); });
+
+        this.eventListenersAdded = true;
+    },
+
+    getFilteredProjects() {
+        let projects = this.state.projects;
+        if (this.state.activeView === 'list' && this.state.listFilter !== 'All') { projects = projects.filter(p => p.type === this.state.listFilter); }
+        if (!this.state.showDoneInList && this.state.activeView === 'list') { projects = projects.filter(p => p.status !== 'Done'); }
+        if (this.state.searchQuery) { const q = this.state.searchQuery.toLowerCase(); projects = projects.filter(p => p.name.toLowerCase().includes(q) || this.getAssigneeName(p).toLowerCase().includes(q) || (p.projectSize && p.projectSize.toLowerCase().includes(q)) || (p.subtasks || []).some(st => st.name.toLowerCase().includes(q)) ); }
+        return projects;
+    },
+
+    render() { this.renderKanban(); this.renderList(); this.renderCalendar(); this.renderReports(); this.renderAssignments(); this.renderSettingsLists(); this.setView(this.state.activeView, true); lucide.createIcons(); },
+    
+    setView(view, isInitialRender = false) {
+        this.state.activeView = view;
+        document.querySelectorAll('.nav-icon').forEach(t => t.classList.remove('active'));
+        document.querySelector(`.nav-icon[data-view='${view}']`).classList.add('active');
+        ['kanban', 'list', 'calendar', 'reports', 'assignments'].forEach(v => { document.getElementById(`${v}-view`).style.display = (view === v) ? '' : 'none'; });
+        if (view === 'calendar' && this.calendar) setTimeout(() => this.calendar.render(), 0); 
+    },
+    
+    renderKanban() {
+        const projects = this.getFilteredProjects(); const container = document.getElementById('kanban-view'); const statuses = ['Not Started', 'In Progress', 'Blocked', 'Done'];
+        container.innerHTML = statuses.map(status => `<div class="bg-white p-5 rounded-xl shadow-md"><h3 class="font-bold text-lg mb-4 text-gray-700 flex items-center"><span class="status-dot ${this.statusColors[status]}"></span>${status}</h3><div id="kanban-col-${status.replace(/\s+/g, '-')}" class="kanban-column space-y-3" data-status="${status}">${projects.filter(p => p.status === status).sort((a, b) => a.priority - b.priority).map(p => this.createProjectCard(p)).join('')}</div></div>`).join('');
+        statuses.forEach(status => { const col = document.getElementById(`kanban-col-${status.replace(/\s+/g, '-')}`); if(col) new Sortable(col, { group: 'projects', animation: 150, onEnd: async (evt) => { const project = this.state.projects.find(p => p.id == evt.item.dataset.id); if (project) { project.status = evt.to.dataset.status; await db.put('projects', project); this.showToast(`${project.name} moved to ${project.status}`); } }}); });
+    },
+    createProjectCard(project) {
+        const subtasks = project.subtasks || [];
+        const doneSubtasks = subtasks.filter(st => st.status === 'Done').length;
+        
+        let subtaskInfo = '';
+        if (subtasks.length > 0) {
+            subtaskInfo = `<div class="mt-2 pt-2 border-t border-gray-200">
+                <p class="text-xs text-gray-500 font-medium">${doneSubtasks} of ${subtasks.length} subtasks complete.</p>
+                <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1"><div class="bg-blue-600 h-1.5 rounded-full" style="width: ${subtasks.length > 0 ? (doneSubtasks / subtasks.length) * 100 : 0}%"></div></div>
+            </div>`;
+        }
+        return `<div class="list-item border border-gray-200 p-3 rounded-lg" data-id="${project.id}" onclick="app.editProject('${project.id}')">
+            <div class="flex justify-between items-start">
+                <h4 class="font-bold text-md w-4/5">${project.name}</h4>
+                <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${this.sizeBadgeClasses[project.projectSize]} whitespace-nowrap">${project.projectSize}</span>
+            </div>
+            <p class="text-sm text-gray-600 my-1 flex items-center gap-2"><i data-lucide="user" class="w-4 h-4"></i>${this.getAssigneeName(project)}</p>
+            <div class="flex justify-between items-center text-sm mt-2 text-gray-700">
+                <span class="flex items-center gap-1.5"><i data-lucide="clock" class="w-4 h-4"></i> ${this.getTotalHours(project)} hrs</span>
+                <span class="font-semibold text-green-700">$${this.calculateTotalCost(project).toFixed(2)}</span>
+            </div>
+            ${subtaskInfo}
+        </div>`;
+    },
+
+    renderList() {
+        const projects = this.getFilteredProjects(); const container = document.getElementById('list-view');
+        const datedProjects = projects.filter(p => p.startDate).sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+        const undatedProjects = projects.filter(p => !p.startDate);
+        const tableHeader = `<thead><tr class="text-left text-sm text-gray-500 font-semibold"><th class="p-2">Start Date</th><th class="p-2">Priority</th><th class="p-2">Project Name</th><th class="p-2">Size</th><th class="p-2">Assigned To</th><th class="p-2">Status</th><th class="p-2">Hours</th><th class="p-2">Cost</th></tr></thead>`;
+        const createRow = p => `<tr class="border-t border-gray-200 hover:bg-gray-50 cursor-pointer" onclick="app.editProject('${p.id}')"><td class="p-2">${p.startDate || ''}</td><td class="p-2"><span class="font-bold ${{1: 'text-red-600', 2: 'text-yellow-600', 3: 'text-blue-600'}[p.priority]}">${{1: 'High', 2: 'Medium', 3: 'Low'}[p.priority]}</span></td><td class="p-2 font-semibold">${p.name}</td><td class="p-2"><span class="text-xs font-semibold px-2 py-0.5 rounded-full ${this.sizeBadgeClasses[p.projectSize]}">${p.projectSize}</span></td><td class="p-2">${this.getAssigneeName(p)}</td><td class="p-2 flex items-center"><span class="status-dot ${this.statusColors[p.status]}"></span>${p.status}</td><td class="p-2">${this.getTotalHours(p)}</td><td class="p-2 font-semibold">$${this.calculateTotalCost(p).toFixed(2)}</td></tr>`;
+        
+        let html = `<div class="flex flex-wrap justify-between items-center mb-4 gap-4">
+                        <div class="flex rounded-lg border border-gray-300 p-1">${['All', 'DIY', 'Contractor'].map(f => `<button class="text-sm font-semibold py-1 px-3 rounded-md ${this.state.listFilter === f ? 'bg-blue-500 text-white' : 'hover:bg-gray-100'}" onclick="app.state.listFilter = '${f}'; app.render();">${f}</button>`).join('')}</div>
+                        <div class="flex items-center gap-4">
+                            <button class="text-sm font-semibold text-blue-600 flex items-center gap-2" onclick="app.copyProjectList()"><i data-lucide="copy" class="w-4 h-4"></i>Copy List</button>
+                            <label class="flex items-center gap-2 cursor-pointer"><span class="text-sm font-medium">Show Completed</span><input type="checkbox" ${this.state.showDoneInList ? 'checked' : ''} class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" onchange="app.state.showDoneInList = this.checked; app.render();"></label>
+                        </div>
+                    </div>`;
+
+        html += `<div class="overflow-x-auto"><table class="w-full">${tableHeader}<tbody>${datedProjects.map(createRow).join('')}</tbody></table></div>`;
+        if (undatedProjects.length > 0) {
+            html += `<h3 class="text-xl font-bold mt-8 mb-4">Projects with No Date</h3><div class="overflow-x-auto"><table class="w-full">${tableHeader}<tbody>${undatedProjects.map(createRow).join('')}</tbody></table></div>`;
+        }
+        container.innerHTML = html;
+    },
+
+    renderCalendar() {
+        const projects = this.getFilteredProjects(); const calendarEl = document.getElementById('calendar'); let events = [];
+        const colorMap = new Map(this.state.family.map(f => [f.name, f.color]));
+        projects.forEach(p => {
+            const subtasks = p.subtasks || [];
+            if (subtasks.length > 0) {
+                subtasks.forEach(st => {
+                    if (st.startDate) {
+                        const color = colorMap.get(st.assignedTo) || '#6b7280'; // Default gray
+                        events.push({ id: p.id, title: `${p.name} - ${st.name}`, start: st.startDate, end: st.endDate ? new Date(new Date(st.endDate).getTime() + 86400000).toISOString().split('T')[0] : st.startDate, backgroundColor: color, textColor: '#ffffff' });
+                    }
+                });
+            } else if (p.startDate) {
+                const color = p.type === 'DIY' && p.familyMembers?.length > 0 ? colorMap.get(p.familyMembers[0]) || '#6b7280' : '#6b7280';
+                events.push({ id: p.id, title: p.name, start: p.startDate, end: p.endDate ? new Date(new Date(p.endDate).getTime() + 86400000).toISOString().split('T')[0] : p.startDate, backgroundColor: color, textColor: '#ffffff' });
+            }
+        });
+        if (this.calendar) this.calendar.destroy();
+        this.calendar = new FullCalendar.Calendar(calendarEl, { initialView: 'dayGridMonth', headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' }, events: events, eventClick: (info) => this.editProject(info.event.id) });
+        if (this.state.activeView === 'calendar') this.calendar.render();
+    },
+    
+    renderReports() {
+        const container = document.getElementById('reports-view');
+        container.innerHTML = `<h2 class="text-2xl font-bold mb-4">Reports</h2>
+            <div class="space-y-6">
+                <div><h3 class="text-xl font-semibold mb-3 border-b pb-2">Monthly Outlook</h3>${this.getMonthlyOutlookReportHTML()}</div>
+                <div><h3 class="text-xl font-semibold mb-3 border-b pb-2">Workload by Person</h3>${this.getWorkloadReportHTML()}</div>
+            </div>`;
+    },
+    getMonthlyOutlookReportHTML() {
+        const outlookByMonth = this.state.projects.reduce((acc, p) => {
+            const month = p.startDate ? new Date(p.startDate).toLocaleString('default', { month: 'long', year: 'numeric' }) : 'Unscheduled';
+            if (!acc[month]) acc[month] = { totalCost: 0, totalHours: 0, projects: [] };
+            acc[month].totalCost += this.calculateTotalCost(p);
+            acc[month].totalHours += this.getTotalHours(p);
+            acc[month].projects.push(p);
+            return acc;
+        }, {});
+        const sortedMonths = Object.keys(outlookByMonth).sort((a,b) => new Date(a) - new Date(b));
+        return sortedMonths.length > 0 ? sortedMonths.map(month => `<div class="mb-2 p-4 rounded-lg border bg-gray-50"><div class="font-semibold flex justify-between"><span>${month}</span><div class="flex gap-4"><span class="font-semibold text-blue-700">${outlookByMonth[month].totalHours} hrs</span><span class="font-bold text-green-700">$${outlookByMonth[month].totalCost.toFixed(2)}</span></div></div><ul class="list-disc pl-5 pt-2 text-sm text-gray-600">${outlookByMonth[month].projects.map(p => `<li>${p.name}</li>`).join('')}</ul></div>`).join('') : `<p class="text-center text-gray-500 py-8">No projects with a start date yet.</p>`;
+    },
+    getWorkloadReportHTML() {
+        const workload = {};
+        this.state.projects.forEach(p => {
+            if (p.type !== 'DIY') return;
+            const subtasks = p.subtasks || [];
+            if (subtasks.length > 0) {
+                subtasks.forEach(st => {
+                    if (!st.startDate || !st.assignedTo) return;
+                    const person = st.assignedTo; const month = new Date(st.startDate).toLocaleString('default', { month: 'long', year: 'numeric' });
+                    if (!workload[person]) workload[person] = {}; if (!workload[person][month]) workload[person][month] = 0;
+                    workload[person][month] += Number(st.hours || 0);
+                });
+            } else {
+                (p.familyMembers || []).forEach(person => {
+                    if (!p.startDate) return;
+                    const month = new Date(p.startDate).toLocaleString('default', { month: 'long', year: 'numeric' });
+                    if (!workload[person]) workload[person] = {}; if (!workload[person][month]) workload[person][month] = 0;
+                    workload[person][month] += Number(p.hours || 0);
+                });
+            }
+        });
+        return Object.keys(workload).length > 0 ? Object.keys(workload).sort().map(person => `<div class="mb-2 p-4 rounded-lg border bg-gray-50"><div class="font-semibold text-lg">${person}</div><ul class="list-disc pl-5 pt-2">${Object.keys(workload[person]).sort((a,b) => new Date(a) - new Date(b)).map(month => `<li><strong>${month}:</strong> ${workload[person][month]} hours</li>`).join('')}</ul></div>`).join('') : `<p class="text-center text-gray-500 py-8">No hours assigned to DIY projects yet.</p>`;
+    },
+    
+    renderAssignments() {
+        const projects = this.getFilteredProjects();
+        const container = document.getElementById('assignments-view');
+        const assignees = [...this.state.family.map(f => f.name), 'Contractor'];
+        
+        container.innerHTML = assignees.map(assignee => {
+            const isContractorLane = assignee === 'Contractor';
+            const laneProjects = projects.filter(p => isContractorLane ? p.type === 'Contractor' : (p.familyMembers || []).includes(assignee));
+            if (laneProjects.length === 0) return '';
+            
+            return `
+            <div class="p-5 rounded-xl shadow-md bg-white">
+                <h2 class="text-2xl font-bold mb-4">${assignee}</h2>
+                <div class="space-y-3 min-h-[100px]">
+                    ${laneProjects.map(p => this.createProjectCard(p)).join('')}
+                </div>
+            </div>`;
+        }).join('');
+    },
+
+    openNewProjectForm() { this.state.editingProjectId = null; document.getElementById('projectForm').reset(); this.populateModalForm({}); document.getElementById('projectStatus').value = 'Not Started'; openModal('projectModal'); },
+    editProject(id) { this.state.editingProjectId = id; const p = this.state.projects.find(proj => proj.id == id); if (!p) return; this.populateModalForm(p); openModal('projectModal'); },
+    
+    populateModalForm(p) {
+        document.getElementById('projectModalTitle').innerText = p.id ? "Edit Project" : "New Project";
+        document.getElementById('projectId').value = p.id || '';
+        document.getElementById('projectName').value = p.name || '';
+        document.getElementById('projectStatus').value = p.status || 'Not Started';
+        document.getElementById('projectPriority').value = p.priority || '3';
+        document.getElementById('projectSize').value = p.projectSize || 'Small';
+        document.getElementById('projectStartDate').value = p.startDate || '';
+        document.getElementById('projectEndDate').value = p.endDate || '';
+        document.getElementById('projectQuote').value = p.quote || '';
+        document.getElementById('projectHours').value = p.hours || '';
+        document.getElementById('projectNotes').value = p.notes || '';
+        
+        document.getElementById(p.type === 'Contractor' ? 'projectTypeContractor' : 'projectTypeDIY').checked = true;
+        this.handleProjectTypeChange();
+        this.populateFamilyMembers(p.familyMembers); this.populateContractors(p.contractorId);
+        document.getElementById('materialsList').innerHTML = ''; (p.materials || []).forEach(m => this.addMaterialRow(m));
+        document.getElementById('subtasksContainer').innerHTML = ''; (p.subtasks || []).forEach(st => this.addSubtaskRow(st));
+        this.updateTotalHours();
+        document.getElementById('deleteProjectBtn').style.display = p.id ? 'inline-flex' : 'none';
+        document.getElementById('deleteProjectBtn').onclick = () => this.deleteProject();
+    },
+
+    async saveProject(e) {
+        e.preventDefault(); 
+        const id = document.getElementById('projectId').value;
+
+        const projectData = { 
+            name: document.getElementById('projectName').value, status: document.getElementById('projectStatus').value, priority: document.getElementById('projectPriority').value, projectSize: document.getElementById('projectSize').value, startDate: document.getElementById('projectStartDate').value, endDate: document.getElementById('projectEndDate').value, type: document.querySelector('input[name="projectType"]:checked').value, contractorId: document.getElementById('projectContractor').value, quote: parseFloat(document.getElementById('projectQuote').value) || 0, hours: parseFloat(document.getElementById('projectHours').value) || 0, familyMembers: Array.from(document.querySelectorAll('#projectFamilyMembers input:checked')).map(el => el.value), materials: Array.from(document.querySelectorAll('.material-row')).map(row => ({ name: row.querySelector('.material-name').value, supplierId: row.querySelector('.material-supplier').value, cost: parseFloat(row.querySelector('.material-cost').value) || 0, owned: row.querySelector('.material-owned').checked, })), subtasks: Array.from(document.querySelectorAll('.subtask-row')).map(row => ({ id: row.dataset.id, name: row.querySelector('.subtask-name').value, status: row.querySelector('.subtask-status').value, assignedTo: row.querySelector('.subtask-assignedTo').value, startDate: row.querySelector('.subtask-startDate').value, endDate: row.querySelector('.subtask-endDate').value, hours: parseFloat(row.querySelector('.subtask-hours').value) || 0 })), notes: document.getElementById('projectNotes').value 
+        };
+
+        if (id) {
+            projectData.id = id;
+            await db.put('projects', projectData);
+        } else {
+            await db.add('projects', projectData);
+        }
+
+        closeModal('projectModal'); this.showToast('Project saved!', 'success');
+    },
+    async deleteProject() { if (confirm('Are you sure?')) { await db.delete('projects', this.state.editingProjectId); closeModal('projectModal'); this.showToast('Project deleted', 'error'); } },
+
+    handleProjectTypeChange() { const type = document.querySelector('input[name="projectType"]:checked').value; document.getElementById('diySection').style.display = type === 'DIY' ? 'block' : 'none'; document.getElementById('contractorSection').style.display = type === 'Contractor' ? 'block' : 'none'; },
+    populateFamilyMembers(selected = []) { const container = document.getElementById('projectFamilyMembers'); container.innerHTML = this.state.family.map(member => `<label class="flex items-center gap-2"><input type="checkbox" value="${member.name}" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 project-member-checkbox" onchange="app.updateAllSubtaskAssignees()" ${selected.includes(member.name) ? 'checked' : ''}><span>${member.name}</span></label>`).join(''); },
+    populateContractors(selectedId = null) { const select = document.getElementById('projectContractor'); select.innerHTML = '<option disabled selected value="">Select contractor</option>' + this.state.contractors.map(c => `<option value="${c.id}" ${c.id == selectedId ? 'selected' : ''}>${c.name}</option>`).join(''); },
+    populateSuppliers(selectEl, selectedId = null) { selectEl.innerHTML = '<option disabled selected value="">Select supplier</option>' + this.state.suppliers.map(s => `<option value="${s.id}" ${s.id == selectedId ? 'selected' : ''}>${s.name}</option>`).join(''); },
+    addMaterialRow(material = {}) { const container = document.getElementById('materialsList'); const row = document.createElement('div'); row.className = 'material-row grid grid-cols-1 md:grid-cols-10 gap-2 items-center'; const uniqueId = `owned_${Date.now()}`; row.innerHTML = `<input type="text" placeholder="Material Name" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border md:col-span-3 material-name" value="${material.name || ''}"><select class="block w-full border-gray-300 rounded-md shadow-sm p-2 border md:col-span-2 material-supplier"></select><input type="number" placeholder="Cost" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border md:col-span-1 material-cost" value="${material.cost || ''}"><label for="${uniqueId}" class="flex items-center gap-2 cursor-pointer md:col-span-2"><input type="checkbox" id="${uniqueId}" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 material-owned" ${material.owned ? 'checked' : ''}><span>Owned</span></label><button type="button" class="text-red-500 hover:text-red-700 md:col-span-1" onclick="this.parentElement.remove()"><i data-lucide="trash-2" class="w-5 h-5"></i></button>`; container.appendChild(row); this.populateSuppliers(row.querySelector('.material-supplier'), material.supplierId); lucide.createIcons(); },
+    addSubtaskRow(subtask = {}) {
+        const container = document.getElementById('subtasksContainer'); const row = document.createElement('div');
+        row.className = 'subtask-row grid grid-cols-12 gap-2 items-center bg-gray-100 p-2 rounded-md'; row.dataset.id = subtask.id || Date.now();
+        const assignees = this.getProjectMemberNames();
+        row.innerHTML = `<input type="text" placeholder="Subtask Name" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-12 md:col-span-3 subtask-name" value="${subtask.name || ''}">
+            <select class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-6 md:col-span-2 subtask-status">${['Not Started', 'In Progress', 'Done'].map(s => `<option ${s === subtask.status ? 'selected':''}>${s}</option>`).join('')}</select>
+            <select class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-6 md:col-span-2 subtask-assignedTo"><option value="">Unassigned</option>${assignees.map(a => `<option ${a === subtask.assignedTo ? 'selected':''}>${a}</option>`).join('')}</select>
+            <input type="date" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-6 md:col-span-2 subtask-startDate" value="${subtask.startDate || ''}">
+            <input type="date" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-6 md:col-span-2 subtask-endDate" value="${subtask.endDate || ''}">
+            <input type="number" placeholder="Hrs" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-10 md:col-span-1 subtask-hours" value="${subtask.hours || ''}" oninput="app.updateTotalHours()">
+            <button type="button" class="text-red-500 hover:text-red-700 col-span-2 md:col-span-1" onclick="this.parentElement.remove(); app.updateTotalHours();"><i data-lucide="trash-2" class="w-5 h-5"></i></button>`;
+        container.appendChild(row); this.updateTotalHours(); lucide.createIcons();
+    },
+    getProjectMemberNames() { return Array.from(document.querySelectorAll('.project-member-checkbox:checked')).map(el => el.value); },
+    updateAllSubtaskAssignees() { const assignees = this.getProjectMemberNames(); document.querySelectorAll('.subtask-assignedTo').forEach(select => { const currentVal = select.value; select.innerHTML = `<option value="">Unassigned</option>${assignees.map(a => `<option ${a === currentVal ? 'selected':''}>${a}</option>`).join('')}`; }); },
+    updateTotalHours() {
+        const subtaskRows = document.querySelectorAll('.subtask-row'); const hoursInput = document.getElementById('projectHours');
+        if (subtaskRows.length > 0) { const total = Array.from(subtaskRows).reduce((sum, row) => sum + (parseFloat(row.querySelector('.subtask-hours').value) || 0), 0); hoursInput.value = total; hoursInput.readOnly = true; } else { hoursInput.readOnly = false; }
+    },
+    getTotalHours(project) { const subtasks = project.subtasks || []; return subtasks.length > 0 ? subtasks.reduce((sum, st) => sum + (Number(st.hours) || 0), 0) : (Number(project.hours) || 0); },
+    getAssigneeName(project, asArray = false) { if (project.type === 'Contractor' && project.contractorId) { const contractor = this.state.contractors.find(c => c.id == project.contractorId); const name = contractor ? contractor.name : 'Unknown'; return asArray ? [name] : name; } else if (project.type === 'DIY' && project.familyMembers && project.familyMembers.length > 0) { return asArray ? project.familyMembers : project.familyMembers.join(', '); } return asArray ? ['Unassigned'] : 'Unassigned'; },
+    calculateTotalCost(project) { if (project.type === 'Contractor') return project.quote || 0; return (project.materials || []).reduce((sum, item) => sum + (item.owned ? 0 : item.cost), 0); },
+    renderSettingsLists() {
+        const familyContainer = document.getElementById('familyList');
+        familyContainer.innerHTML = this.state.family.map(item => `
+            <li class="flex justify-between items-center bg-gray-100 p-2 rounded-md">
+                <div class="flex items-center gap-3">
+                    <span class="color-swatch" style="background-color: ${item.color};"></span>
+                    <span>${item.name}</span>
+                </div>
+                <button class="text-red-500 hover:text-red-700" onclick="app.removeListItem('family', '${item.id}')"><i data-lucide="x" class="w-4 h-4"></i></button>
+            </li>`).join('');
+        ['contractors', 'suppliers'].forEach(key => { document.getElementById(`${key.slice(0,-1)}List`).innerHTML = this.state[key].map(item => `<li class="flex justify-between items-center bg-gray-100 p-2 rounded-md"><span>${item.name}</span><button class="text-red-500 hover:text-red-700" onclick="app.removeListItem('${key}', '${item.id}')"><i data-lucide="x" class="w-4 h-4"></i></button></li>`).join(''); });
+        lucide.createIcons();
+    },
+    async addListItem(listName) {
+        const inputEl = document.getElementById({ family: 'newFamilyMember', contractors: 'newContractorName', suppliers: 'newSupplierName' }[listName]);
+        const value = inputEl.value.trim();
+        if (value) {
+            let newItem = { name: value };
+            if (listName === 'family') {
+                const usedColors = this.state.family.map(f => f.color);
+                newItem.color = this.colorPalette.find(c => !usedColors.includes(c)) || this.colorPalette[0];
+            }
+            await db.add(listName, newItem);
+            inputEl.value = '';
+        }
+    },
+    async removeListItem(listName, id) { if (confirm('Are you sure?')) { await db.delete(listName, id); } },
+    async copyProjectList() {
+        const projects = this.getFilteredProjects().filter(p => this.state.showDoneInList || p.status !== 'Done');
+        const dated = projects.filter(p => p.startDate).sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+        const undated = projects.filter(p => !p.startDate);
+        const formatProject = p => `${p.startDate || 'No Date'}: ${p.name} (${p.status}) - ${this.getAssigneeName(p)}`;
+        let textToCopy = "Dated Projects:\n" + dated.map(formatProject).join('\n');
+        if (undated.length > 0) {
+            textToCopy += "\n\nUndated Projects:\n" + undated.map(formatProject).join('\n');
+        }
+        await navigator.clipboard.writeText(textToCopy);
+        this.showToast('Project list copied to clipboard!', 'success');
+    },
+    async exportData() { 
+        const dataToExport = { 
+            projects: await db.getAll('projects'), 
+            family: await db.getAll('family'), 
+            contractors: await db.getAll('contractors'), 
+            suppliers: await db.getAll('suppliers'), 
+        }; 
+        const jsonString = JSON.stringify(dataToExport, null, 2); const blob = new Blob([jsonString], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `home-planner-backup-${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); this.showToast('Data exported!', 'success'); 
+    },
+    async importData(event) {
+        const file = event.target.files[0]; if (!file) return; const reader = new FileReader();
+        reader.onload = async (e) => {
+            try { 
+                const data = JSON.parse(e.target.result); 
+                if (!data.projects || !data.family) { throw new Error("Invalid file format."); }
+                if (confirm('This will overwrite all current data. Proceed?')) {
+                    await db.clearAndImport(data);
+                    this.showToast('Data imported!', 'success');
+                }
+            } catch (error) { 
+                this.showToast('Error importing data: ' + error.message, 'error'); 
+            } finally { 
+                event.target.value = null; 
+            }
+        };
+        reader.readAsText(file);
+    },
+    showToast(message, type = 'info') {
+        const toastColors = { info: 'bg-blue-500', success: 'bg-green-500', error: 'bg-red-500' };
+        const toast = document.createElement('div'); toast.className = `toast ${toastColors[type]} transition-opacity duration-300 opacity-0`;
+        toast.innerHTML = `<span>${message}</span>`; document.getElementById('toastContainer').appendChild(toast);
+        setTimeout(() => toast.classList.remove('opacity-0'), 10);
+        setTimeout(() => { toast.classList.add('opacity-0'); setTimeout(() => toast.remove(), 300); }, 3000);
+    }
+};
+
+// --- START THE APP --- //
+document.addEventListener('DOMContentLoaded', () => { 
+    window.app = app; 
+    app.init(); 
+});
+</script>
+</body>
+</html>
