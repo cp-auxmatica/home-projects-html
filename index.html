@@ -52,6 +52,7 @@
         .color-swatch { width: 20px; height: 20px; border-radius: 50%; cursor: pointer; border: 2px solid white; box-shadow: 0 0 0 1px rgba(0,0,0,0.2); }
         .list-item { transition: background-color: 0.2s; cursor: pointer; }
         .list-item:hover { background-color: #f8fafc; }
+        .list-item, .list-item::before { list-style: none !important; list-style-type: none !important; content: none !important; }
         .toast {
             position: fixed;
             bottom: 1.5rem;
@@ -69,12 +70,17 @@
 
     <div id="app" class="max-w-7xl mx-auto p-4 md:p-6" style="display: none;">
         
-        <header class="mb-4 flex flex-wrap justify-between items-center gap-4">
-            <h1 class="planner-title text-4xl text-orange-500">hub</h1><h2 class="text-black-200">HOME PROJECT PLANNER</h2>
-            <div class="flex items-center gap-2">
+        <header class="mb-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+            <div class="flex items-baseline gap-3 self-start sm:self-center">
+                <h1 class="planner-title text-4xl text-orange-500">hub</h1>
+                <h2 class="text-gray-700 tracking-wider">HOME PROJECT PLANNER</h2>
+            </div>
+            <div class="w-full sm:w-auto flex flex-col md:flex-row gap-2">
                 <input type="text" id="searchInput" placeholder="Search projects..." class="block w-full border-gray-300 rounded-md shadow-sm p-2 border">
-                <button onclick="app.openNewProjectForm()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg flex items-center whitespace-nowrap"><i data-lucide="plus" class="w-5 h-5 mr-2"></i>New Project</button>
-                <button onclick="openModal('settingsModal')" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg"><i data-lucide="settings" class="w-5 h-5"></i></button>
+                <div class="flex gap-2">
+                    <button onclick="app.openNewProjectForm()" class="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center whitespace-nowrap"><i data-lucide="plus" class="w-5 h-5 mr-2"></i>New Project</button>
+                    <button onclick="openModal('settingsModal')" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg"><i data-lucide="settings" class="w-5 h-5"></i></button>
+                </div>
             </div>
         </header>
 
@@ -234,12 +240,10 @@ const db = {
 
     _getCollectionRef(collectionName) {
         if (!this._userId) throw new Error("User not authenticated for write operations.");
-        // This is the updated path for public data. It needs an odd number of segments.
         return collection(this._db, 'artifacts', this._appId, 'public', 'data', collectionName);
     },
 
     listen(collectionName, callback) {
-        // The path for public data doesn't require a userId. It needs an odd number of segments.
         const collRef = collection(this._db, 'artifacts', this._appId, 'public', 'data', collectionName);
         return onSnapshot(collRef, (snapshot) => {
             const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -274,14 +278,12 @@ const db = {
         const collections = ['projects', 'family', 'contractors', 'suppliers'];
         const batch = writeBatch(this._db);
 
-        // Clear existing data
         for (const coll of collections) {
             const snapshot = await getDocs(this._getCollectionRef(coll));
             snapshot.docs.forEach(doc => batch.delete(doc.ref));
         }
         await batch.commit();
 
-        // Import new data
         const importBatch = writeBatch(this._db);
         for (const coll of collections) {
             if (data[coll]) {
@@ -305,12 +307,13 @@ const app = {
     sizeBadgeClasses: { "Quick Fix": 'bg-gray-100 text-gray-800', "Small": 'bg-blue-100 text-blue-800', "Medium": 'bg-green-100 text-green-800', "Big": 'bg-yellow-100 text-yellow-800', "Overhaul": 'bg-red-100 text-red-800' },
     colorPalette: ['#3b82f6', '#10b981', '#f97316', '#8b5cf6', '#ef4444', '#f59e0b', '#14b8a6', '#6366f1'],
     unsubscribers: [],
+    calendar: null,
 
     async init() {
         try {
             await db.init();
             
-            this.unsubscribers.forEach(unsub => unsub()); // Clear existing listeners if re-initializing
+            this.unsubscribers.forEach(unsub => unsub());
             this.unsubscribers = [];
 
             const collectionsToSync = ['projects', 'family', 'contractors', 'suppliers'];
@@ -333,7 +336,6 @@ const app = {
     },
     
     addEventListeners() {
-        // This function is now designed to be idempotent (safe to call multiple times)
         if (this.eventListenersAdded) return;
         
         document.querySelector('#projectForm').addEventListener('submit', this.saveProject.bind(this));
@@ -374,6 +376,9 @@ const app = {
         const subtasks = project.subtasks || [];
         const doneSubtasks = subtasks.filter(st => st.status === 'Done').length;
         
+        const userIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
+        const clockIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+
         let subtaskInfo = '';
         if (subtasks.length > 0) {
             subtaskInfo = `<div class="mt-2 pt-2 border-t border-gray-200">
@@ -386,9 +391,9 @@ const app = {
                 <h4 class="font-bold text-md w-4/5">${project.name}</h4>
                 <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${this.sizeBadgeClasses[project.projectSize]} whitespace-nowrap">${project.projectSize}</span>
             </div>
-            <p class="text-sm text-gray-600 my-1 flex items-center gap-2"><i data-lucide="user" class="w-4 h-4"></i>${this.getAssigneeName(project)}</p>
+            <p class="text-sm text-gray-600 my-1 flex items-center gap-2">${userIcon} ${this.getAssigneeName(project)}</p>
             <div class="flex justify-between items-center text-sm mt-2 text-gray-700">
-                <span class="flex items-center gap-1.5"><i data-lucide="clock" class="w-4 h-4"></i> ${this.getTotalHours(project)} hrs</span>
+                <span class="flex items-center gap-1.5">${clockIcon} ${this.getTotalHours(project)} hrs</span>
                 <span class="font-semibold text-green-700">$${this.calculateTotalCost(project).toFixed(2)}</span>
             </div>
             ${subtaskInfo}
@@ -396,25 +401,59 @@ const app = {
     },
 
     renderList() {
-        const projects = this.getFilteredProjects(); const container = document.getElementById('list-view');
+        const projects = this.getFilteredProjects();
+        const container = document.getElementById('list-view');
         const datedProjects = projects.filter(p => p.startDate).sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
         const undatedProjects = projects.filter(p => !p.startDate);
-        const tableHeader = `<thead><tr class="text-left text-sm text-gray-500 font-semibold"><th class="p-2">Start Date</th><th class="p-2">Priority</th><th class="p-2">Project Name</th><th class="p-2">Size</th><th class="p-2">Assigned To</th><th class="p-2">Status</th><th class="p-2">Hours</th><th class="p-2">Cost</th></tr></thead>`;
-        const createRow = p => `<tr class="border-t border-gray-200 hover:bg-gray-50 cursor-pointer" onclick="app.editProject('${p.id}')"><td class="p-2">${p.startDate || ''}</td><td class="p-2"><span class="font-bold ${{1: 'text-red-600', 2: 'text-yellow-600', 3: 'text-blue-600'}[p.priority]}">${{1: 'High', 2: 'Medium', 3: 'Low'}[p.priority]}</span></td><td class="p-2 font-semibold">${p.name}</td><td class="p-2"><span class="text-xs font-semibold px-2 py-0.5 rounded-full ${this.sizeBadgeClasses[p.projectSize]}">${p.projectSize}</span></td><td class="p-2">${this.getAssigneeName(p)}</td><td class="p-2 flex items-center"><span class="status-dot ${this.statusColors[p.status]}"></span>${p.status}</td><td class="p-2">${this.getTotalHours(p)}</td><td class="p-2 font-semibold">$${this.calculateTotalCost(p).toFixed(2)}</td></tr>`;
-        
-        let html = `<div class="flex flex-wrap justify-between items-center mb-4 gap-4">
-                        <div class="flex rounded-lg border border-gray-300 p-1">${['All', 'DIY', 'Contractor'].map(f => `<button class="text-sm font-semibold py-1 px-3 rounded-md ${this.state.listFilter === f ? 'bg-blue-500 text-white' : 'hover:bg-gray-100'}" onclick="app.state.listFilter = '${f}'; app.render();">${f}</button>`).join('')}</div>
-                        <div class="flex items-center gap-4">
-                            <button class="text-sm font-semibold text-blue-600 flex items-center gap-2" onclick="app.copyProjectList()"><i data-lucide="copy" class="w-4 h-4"></i>Copy List</button>
-                            <label class="flex items-center gap-2 cursor-pointer"><span class="text-sm font-medium">Show Completed</span><input type="checkbox" ${this.state.showDoneInList ? 'checked' : ''} class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" onchange="app.state.showDoneInList = this.checked; app.render();"></label>
-                        </div>
-                    </div>`;
 
-        html += `<div class="overflow-x-auto"><table class="w-full">${tableHeader}<tbody>${datedProjects.map(createRow).join('')}</tbody></table></div>`;
+        const headerHTML = `
+            <div class="flex flex-col sm:flex-row flex-wrap justify-between items-center mb-4 gap-4">
+                <div class="flex rounded-lg border border-gray-300 p-1">
+                    ${['All', 'DIY', 'Contractor'].map(f => `<button class="text-sm font-semibold py-1 px-3 rounded-md ${this.state.listFilter === f ? 'bg-blue-500 text-white' : 'hover:bg-gray-100'}" onclick="app.state.listFilter = '${f}'; app.render();">${f}</button>`).join('')}
+                </div>
+                <div class="flex items-center gap-4">
+                    <button class="text-sm font-semibold text-blue-600 flex items-center gap-2" onclick="app.copyProjectList()"><i data-lucide="copy" class="w-4 h-4"></i>Copy List</button>
+                    <label class="flex items-center gap-2 cursor-pointer"><span class="text-sm font-medium">Show Completed</span><input type="checkbox" ${this.state.showDoneInList ? 'checked' : ''} class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" onchange="app.state.showDoneInList = this.checked; app.render();"></label>
+                </div>
+            </div>`;
+
+        const createMobileCard = p => `
+            <div class="border-t border-gray-200 p-4 cursor-pointer hover:bg-gray-50" onclick="app.editProject('${p.id}')">
+                <div class="flex justify-between items-start gap-2">
+                    <h4 class="font-bold text-lg">${p.name}</h4>
+                    <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${this.sizeBadgeClasses[p.projectSize]} whitespace-nowrap">${p.projectSize}</span>
+                </div>
+                <div class="mt-2 text-sm text-gray-600 space-y-1">
+                    <div class="flex items-center"><span class="status-dot ${this.statusColors[p.status]}"></span>${p.status}</div>
+                    <div><strong>Assigned:</strong> ${this.getAssigneeName(p)}</div>
+                    <div><strong>Priority:</strong> <span class="font-bold ${{1: 'text-red-600', 2: 'text-yellow-600', 3: 'text-blue-600'}[p.priority]}">${{1: 'High', 2: 'Medium', 3: 'Low'}[p.priority]}</span></div>
+                    <div><strong>Dates:</strong> ${p.startDate || 'Not set'}</div>
+                    <div class="flex justify-between items-center pt-2 mt-1">
+                        <span>${this.getTotalHours(p)} hrs</span>
+                        <span class="font-semibold text-lg text-green-700">$${this.calculateTotalCost(p).toFixed(2)}</span>
+                    </div>
+                </div>
+            </div>`;
+        
+        let mobileHTML = `<div class="md:hidden">`;
+        datedProjects.forEach(p => mobileHTML += createMobileCard(p));
         if (undatedProjects.length > 0) {
-            html += `<h3 class="text-xl font-bold mt-8 mb-4">Projects with No Date</h3><div class="overflow-x-auto"><table class="w-full">${tableHeader}<tbody>${undatedProjects.map(createRow).join('')}</tbody></table></div>`;
+            mobileHTML += `<h3 class="text-xl font-bold mt-8 mb-2 p-4 bg-gray-100 rounded-t-lg">Projects with No Date</h3>`;
+            undatedProjects.forEach(p => mobileHTML += createMobileCard(p));
         }
-        container.innerHTML = html;
+        mobileHTML += '</div>';
+
+        const tableHeader = `<thead><tr class="text-left text-sm text-gray-500 font-semibold"><th class="p-2">Start Date</th><th class="p-2">Priority</th><th class="p-2">Project Name</th><th class="p-2">Size</th><th class="p-2">Assigned To</th><th class="p-2">Status</th><th class="p-2">Hours</th><th class="p-2">Cost</th></tr></thead>`;
+        const createTableRow = p => `<tr class="border-t border-gray-200 hover:bg-gray-50 cursor-pointer" onclick="app.editProject('${p.id}')"><td class="p-2">${p.startDate || ''}</td><td class="p-2"><span class="font-bold ${{1: 'text-red-600', 2: 'text-yellow-600', 3: 'text-blue-600'}[p.priority]}">${{1: 'High', 2: 'Medium', 3: 'Low'}[p.priority]}</span></td><td class="p-2 font-semibold">${p.name}</td><td class="p-2"><span class="text-xs font-semibold px-2 py-0.5 rounded-full ${this.sizeBadgeClasses[p.projectSize]}">${p.projectSize}</span></td><td class="p-2">${this.getAssigneeName(p)}</td><td class="p-2 flex items-center"><span class="status-dot ${this.statusColors[p.status]}"></span>${p.status}</td><td class="p-2">${this.getTotalHours(p)}</td><td class="p-2 font-semibold">$${this.calculateTotalCost(p).toFixed(2)}</td></tr>`;
+        
+        let tableHTML = `<div class="hidden md:block">`;
+        tableHTML += `<div class="overflow-x-auto"><table class="w-full">${tableHeader}<tbody>${datedProjects.map(createTableRow).join('')}</tbody></table></div>`;
+        if (undatedProjects.length > 0) {
+            tableHTML += `<h3 class="text-xl font-bold mt-8 mb-4">Projects with No Date</h3><div class="overflow-x-auto"><table class="w-full">${tableHeader}<tbody>${undatedProjects.map(createTableRow).join('')}</tbody></table></div>`;
+        }
+        tableHTML += '</div>';
+
+        container.innerHTML = headerHTML + mobileHTML + tableHTML;
     },
 
     renderCalendar() {
@@ -425,7 +464,7 @@ const app = {
             if (subtasks.length > 0) {
                 subtasks.forEach(st => {
                     if (st.startDate) {
-                        const color = colorMap.get(st.assignedTo) || '#6b7280'; // Default gray
+                        const color = colorMap.get(st.assignedTo) || '#6b7280';
                         events.push({ id: p.id, title: `${p.name} - ${st.name}`, start: st.startDate, end: st.endDate ? new Date(new Date(st.endDate).getTime() + 86400000).toISOString().split('T')[0] : st.startDate, backgroundColor: color, textColor: '#ffffff' });
                     }
                 });
@@ -434,9 +473,21 @@ const app = {
                 events.push({ id: p.id, title: p.name, start: p.startDate, end: p.endDate ? new Date(new Date(p.endDate).getTime() + 86400000).toISOString().split('T')[0] : p.startDate, backgroundColor: color, textColor: '#ffffff' });
             }
         });
-        if (this.calendar) this.calendar.destroy();
-        this.calendar = new FullCalendar.Calendar(calendarEl, { initialView: 'dayGridMonth', headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' }, events: events, eventClick: (info) => this.editProject(info.event.id) });
-        if (this.state.activeView === 'calendar') this.calendar.render();
+
+        if (!this.calendar) {
+            this.calendar = new FullCalendar.Calendar(calendarEl, { 
+                initialView: 'dayGridMonth', 
+                headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' }, 
+                events: events, 
+                eventClick: (info) => this.editProject(info.event.id) 
+            });
+            if (this.state.activeView === 'calendar') {
+                this.calendar.render();
+            }
+        } else {
+            this.calendar.removeAllEvents();
+            this.calendar.addEventSource(events);
+        }
     },
     
     renderReports() {
@@ -621,7 +672,7 @@ const app = {
             contractors: await db.getAll('contractors'), 
             suppliers: await db.getAll('suppliers'), 
         }; 
-        const jsonString = JSON.stringify(dataToExport, null, 2); const blob = new Blob([jsonString], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `home-planner-backup-${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); this.showToast('Data exported!', 'success'); 
+        const jsonString = JSON.stringify(dataToExport, null, 2); const blob = new Blob([jsonString], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `home-planner-backup-2025-09-21.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); this.showToast('Data exported!', 'success'); 
     },
     async importData(event) {
         const file = event.target.files[0]; if (!file) return; const reader = new FileReader();
