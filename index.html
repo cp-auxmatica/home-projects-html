@@ -50,7 +50,7 @@
         .sortable-ghost { background: #f0f0f0; border: 2px dashed #ccc; }
         .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
         .color-swatch { width: 20px; height: 20px; border-radius: 50%; cursor: pointer; border: 2px solid white; box-shadow: 0 0 0 1px rgba(0,0,0,0.2); }
-        .list-item { transition: background-color 0.2s; cursor: pointer; }
+        .list-item { transition: background-color: 0.2s; cursor: pointer; }
         .list-item:hover { background-color: #f8fafc; }
         .toast {
             position: fixed;
@@ -233,12 +233,14 @@ const db = {
     },
 
     _getCollectionRef(collectionName) {
-        if (!this._userId) throw new Error("User not authenticated.");
-        return collection(this._db, 'artifacts', this._appId, 'users', this._userId, collectionName);
+        if (!this._userId) throw new Error("User not authenticated for write operations.");
+        // This is the updated path for public data. It needs an odd number of segments.
+        return collection(this._db, 'artifacts', this._appId, 'public', 'data', collectionName);
     },
 
     listen(collectionName, callback) {
-        const collRef = this._getCollectionRef(collectionName);
+        // The path for public data doesn't require a userId. It needs an odd number of segments.
+        const collRef = collection(this._db, 'artifacts', this._appId, 'public', 'data', collectionName);
         return onSnapshot(collRef, (snapshot) => {
             const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             callback(data);
