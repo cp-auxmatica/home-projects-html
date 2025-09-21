@@ -48,7 +48,7 @@
         .kanban-column { min-height: 200px; }
         .fc-event { cursor: pointer; border: none !important; }
         .sortable-ghost { background: #f0f0f0; border: 2px dashed #ccc; }
-        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
         .color-swatch { width: 20px; height: 20px; border-radius: 50%; cursor: pointer; border: 2px solid white; box-shadow: 0 0 0 1px rgba(0,0,0,0.2); }
         .list-item { transition: background-color: 0.2s; cursor: pointer; }
         .list-item:hover { background-color: #f8fafc; }
@@ -89,6 +89,7 @@
                  <button class="nav-icon relative p-2" data-view="kanban" onclick="app.setView('kanban')"><i data-lucide="layout-grid" class="text-gray-500 w-7 h-7"></i></button>
                  <button class="nav-icon relative p-2" data-view="list" onclick="app.setView('list')"><i data-lucide="list" class="text-gray-500 w-7 h-7"></i></button>
                  <button class="nav-icon relative p-2" data-view="calendar" onclick="app.setView('calendar')"><i data-lucide="calendar-days" class="text-gray-500 w-7 h-7"></i></button>
+                 <button class="nav-icon relative p-2" data-view="budget" onclick="app.setView('budget')"><i data-lucide="dollar-sign" class="text-gray-500 w-7 h-7"></i></button>
                  <button class="nav-icon relative p-2" data-view="reports" onclick="app.setView('reports')"><i data-lucide="pie-chart" class="text-gray-500 w-7 h-7"></i></button>
                  <button class="nav-icon relative p-2" data-view="assignments" onclick="app.setView('assignments')"><i data-lucide="users" class="text-gray-500 w-7 h-7"></i></button>
             </div>
@@ -96,8 +97,9 @@
 
         <main>
             <div id="kanban-view" class="page-view grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
-            <div id="list-view" class="page-view bg-white p-5 rounded-xl shadow-md"></div>
+            <div id="list-view" class="page-view bg-white p-0 sm:p-5 rounded-xl shadow-md"></div>
             <div id="calendar-view" class="page-view bg-white p-4 rounded-xl shadow-md"><div id="calendar"></div></div>
+            <div id="budget-view" class="page-view bg-white p-5 rounded-xl shadow-md"></div>
             <div id="reports-view" class="page-view bg-white p-5 rounded-xl shadow-md"></div>
             <div id="assignments-view" class="page-view grid grid-cols-1 lg:grid-cols-3 gap-6"></div>
         </main>
@@ -197,7 +199,6 @@ const db = {
     _appId: 'home-project-planner',
     
     async init() {
-        // Use globally provided config if available
         const firebaseConfig = typeof __firebase_config !== 'undefined' 
             ? JSON.parse(__firebase_config)
             : {
@@ -216,7 +217,7 @@ const db = {
 
         return new Promise((resolve, reject) => {
             const unsub = this._auth.onAuthStateChanged(async user => {
-                unsub(); // Unsubscribe after first auth state change
+                unsub();
                 if (user) {
                     this._userId = user.uid;
                     resolve();
@@ -254,19 +255,16 @@ const db = {
     },
     
     async add(collectionName, item) {
-        const collRef = this._getCollectionRef(collectionName);
-        return await addDoc(collRef, item);
+        return await addDoc(this._getCollectionRef(collectionName), item);
     },
 
     async put(collectionName, item) {
         if (!item.id) throw new Error("Item must have an ID to be put.");
-        const docRef = doc(this._getCollectionRef(collectionName), item.id);
-        return await setDoc(docRef, item);
+        return await setDoc(doc(this._getCollectionRef(collectionName), item.id), item);
     },
 
     async delete(collectionName, key) {
-        const docRef = doc(this._getCollectionRef(collectionName), key);
-        return await deleteDoc(docRef);
+        return await deleteDoc(doc(this._getCollectionRef(collectionName), key));
     },
     
     async getAll(collectionName) {
@@ -312,19 +310,14 @@ const app = {
     async init() {
         try {
             await db.init();
-            
             this.unsubscribers.forEach(unsub => unsub());
             this.unsubscribers = [];
-
-            const collectionsToSync = ['projects', 'family', 'contractors', 'suppliers'];
-            collectionsToSync.forEach(name => {
-                const unsub = db.listen(name, (data) => {
+            ['projects', 'family', 'contractors', 'suppliers'].forEach(name => {
+                this.unsubscribers.push(db.listen(name, (data) => {
                     this.state[name] = data;
                     this.render();
-                });
-                this.unsubscribers.push(unsub);
+                }));
             });
-            
             document.getElementById('loading').style.display = 'none';
             document.getElementById('app').style.display = 'block';
             this.addEventListeners();
@@ -337,7 +330,6 @@ const app = {
     
     addEventListeners() {
         if (this.eventListenersAdded) return;
-        
         document.querySelector('#projectForm').addEventListener('submit', this.saveProject.bind(this));
         document.querySelector('#addMaterialBtn').addEventListener('click', () => this.addMaterialRow());
         document.querySelector('#addSubtaskBtn').addEventListener('click', () => this.addSubtaskRow());
@@ -345,7 +337,6 @@ const app = {
         document.getElementById('searchInput').addEventListener('input', (e) => { this.state.searchQuery = e.target.value; this.render(); });
         document.getElementById('cancelProjectBtn').addEventListener('click', () => closeModal('projectModal'));
         document.getElementById('projectModal').addEventListener('click', (e) => { if(e.target.id === 'projectModal') closeModal('projectModal'); });
-
         this.eventListenersAdded = true;
     },
 
@@ -357,47 +348,41 @@ const app = {
         return projects;
     },
 
-    render() { this.renderKanban(); this.renderList(); this.renderCalendar(); this.renderReports(); this.renderAssignments(); this.renderSettingsLists(); this.setView(this.state.activeView, true); lucide.createIcons(); },
+    render() { this.renderKanban(); this.renderList(); this.renderCalendar(); this.renderBudget(); this.renderReports(); this.renderAssignments(); this.renderSettingsLists(); this.setView(this.state.activeView, true); lucide.createIcons(); },
     
     setView(view, isInitialRender = false) {
         this.state.activeView = view;
         document.querySelectorAll('.nav-icon').forEach(t => t.classList.remove('active'));
         document.querySelector(`.nav-icon[data-view='${view}']`).classList.add('active');
-        ['kanban', 'list', 'calendar', 'reports', 'assignments'].forEach(v => { document.getElementById(`${v}-view`).style.display = (view === v) ? '' : 'none'; });
+        ['kanban', 'list', 'calendar', 'budget', 'reports', 'assignments'].forEach(v => { document.getElementById(`${v}-view`).style.display = (view === v) ? '' : 'none'; });
         if (view === 'calendar' && this.calendar) setTimeout(() => this.calendar.render(), 0); 
     },
     
     renderKanban() {
-        const projects = this.getFilteredProjects(); const container = document.getElementById('kanban-view'); const statuses = ['Not Started', 'In Progress', 'Blocked', 'Done'];
-        container.innerHTML = statuses.map(status => `<div class="bg-white p-5 rounded-xl shadow-md"><h3 class="font-bold text-lg mb-4 text-gray-700 flex items-center"><span class="status-dot ${this.statusColors[status]}"></span>${status}</h3><div id="kanban-col-${status.replace(/\s+/g, '-')}" class="kanban-column space-y-3" data-status="${status}">${projects.filter(p => p.status === status).sort((a, b) => a.priority - b.priority).map(p => this.createProjectCard(p)).join('')}</div></div>`).join('');
-        statuses.forEach(status => { const col = document.getElementById(`kanban-col-${status.replace(/\s+/g, '-')}`); if(col) new Sortable(col, { group: 'projects', animation: 150, onEnd: async (evt) => { const project = this.state.projects.find(p => p.id == evt.item.dataset.id); if (project) { project.status = evt.to.dataset.status; await db.put('projects', project); this.showToast(`${project.name} moved to ${project.status}`); } }}); });
+        const projects = this.getFilteredProjects();
+        const container = document.getElementById('kanban-view');
+        const statuses = ['Not Started', 'In Progress', 'Blocked', 'Done'];
+        container.innerHTML = statuses.map(status => `<div class="bg-white p-5 rounded-xl shadow-md"><h3 class="font-bold text-lg mb-4 text-gray-700 flex items-center"><span class="status-dot mr-2 ${this.statusColors[status]}"></span>${status}</h3><div id="kanban-col-${status.replace(/\s+/g, '-')}" class="kanban-column space-y-3" data-status="${status}">${projects.filter(p => p.status === status).sort((a, b) => a.priority - b.priority).map(p => this.createProjectCard(p)).join('')}</div></div>`).join('');
+        statuses.forEach(status => {
+            const col = document.getElementById(`kanban-col-${status.replace(/\s+/g, '-')}`);
+            if(col) new Sortable(col, { group: 'projects', animation: 150, onEnd: async (evt) => {
+                const project = this.state.projects.find(p => p.id == evt.item.dataset.id);
+                if (project) {
+                    project.status = evt.to.dataset.status;
+                    await db.put('projects', project);
+                    this.showToast(`${project.name} moved to ${project.status}`);
+                }
+            }});
+        });
     },
+
     createProjectCard(project) {
         const subtasks = project.subtasks || [];
         const doneSubtasks = subtasks.filter(st => st.status === 'Done').length;
-        
         const userIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
         const clockIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
-
-        let subtaskInfo = '';
-        if (subtasks.length > 0) {
-            subtaskInfo = `<div class="mt-2 pt-2 border-t border-gray-200">
-                <p class="text-xs text-gray-500 font-medium">${doneSubtasks} of ${subtasks.length} subtasks complete.</p>
-                <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1"><div class="bg-blue-600 h-1.5 rounded-full" style="width: ${subtasks.length > 0 ? (doneSubtasks / subtasks.length) * 100 : 0}%"></div></div>
-            </div>`;
-        }
-        return `<div class="list-item border border-gray-200 p-3 rounded-lg" data-id="${project.id}" onclick="app.editProject('${project.id}')">
-            <div class="flex justify-between items-start">
-                <h4 class="font-bold text-md w-4/5">${project.name}</h4>
-                <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${this.sizeBadgeClasses[project.projectSize]} whitespace-nowrap">${project.projectSize}</span>
-            </div>
-            <p class="text-sm text-gray-600 my-1 flex items-center gap-2">${userIcon} ${this.getAssigneeName(project)}</p>
-            <div class="flex justify-between items-center text-sm mt-2 text-gray-700">
-                <span class="flex items-center gap-1.5">${clockIcon} ${this.getTotalHours(project)} hrs</span>
-                <span class="font-semibold text-green-700">$${this.calculateTotalCost(project).toFixed(2)}</span>
-            </div>
-            ${subtaskInfo}
-        </div>`;
+        let subtaskInfo = subtasks.length > 0 ? `<div class="mt-2 pt-2 border-t border-gray-200"><p class="text-xs text-gray-500 font-medium">${doneSubtasks} of ${subtasks.length} subtasks complete.</p><div class="w-full bg-gray-200 rounded-full h-1.5 mt-1"><div class="bg-blue-600 h-1.5 rounded-full" style="width: ${subtasks.length > 0 ? (doneSubtasks / subtasks.length) * 100 : 0}%"></div></div></div>` : '';
+        return `<div class="list-item border border-gray-200 p-3 rounded-lg" data-id="${project.id}" onclick="app.editProject('${project.id}')"><div class="flex justify-between items-start"><h4 class="font-bold text-md w-4/5">${project.name}</h4><span class="text-xs font-semibold px-2 py-0.5 rounded-full ${this.sizeBadgeClasses[project.projectSize]} whitespace-nowrap">${project.projectSize}</span></div><p class="text-sm text-gray-600 my-1 flex items-center gap-2">${userIcon} ${this.getAssigneeName(project)}</p><div class="flex justify-between items-center text-sm mt-2 text-gray-700"><span class="flex items-center gap-1.5">${clockIcon} ${this.getTotalHours(project)} hrs</span><span class="font-semibold text-green-700">$${this.calculateTotalCost(project).toFixed(2)}</span></div>${subtaskInfo}</div>`;
     },
 
     renderList() {
@@ -405,49 +390,20 @@ const app = {
         const container = document.getElementById('list-view');
         const datedProjects = projects.filter(p => p.startDate).sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
         const undatedProjects = projects.filter(p => !p.startDate);
-
-        const headerHTML = `
-            <div class="flex flex-col sm:flex-row flex-wrap justify-between items-center mb-4 gap-4">
-                <div class="flex rounded-lg border border-gray-300 p-1">
-                    ${['All', 'DIY', 'Contractor'].map(f => `<button class="text-sm font-semibold py-1 px-3 rounded-md ${this.state.listFilter === f ? 'bg-blue-500 text-white' : 'hover:bg-gray-100'}" onclick="app.state.listFilter = '${f}'; app.render();">${f}</button>`).join('')}
-                </div>
-                <div class="flex items-center gap-4">
-                    <button class="text-sm font-semibold text-blue-600 flex items-center gap-2" onclick="app.copyProjectList()"><i data-lucide="copy" class="w-4 h-4"></i>Copy List</button>
-                    <label class="flex items-center gap-2 cursor-pointer"><span class="text-sm font-medium">Show Completed</span><input type="checkbox" ${this.state.showDoneInList ? 'checked' : ''} class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" onchange="app.state.showDoneInList = this.checked; app.render();"></label>
-                </div>
-            </div>`;
-
-        const createMobileCard = p => `
-            <div class="border-t border-gray-200 p-4 cursor-pointer hover:bg-gray-50" onclick="app.editProject('${p.id}')">
-                <div class="flex justify-between items-start gap-2">
-                    <h4 class="font-bold text-lg">${p.name}</h4>
-                    <span class="text-xs font-semibold px-2 py-0.5 rounded-full ${this.sizeBadgeClasses[p.projectSize]} whitespace-nowrap">${p.projectSize}</span>
-                </div>
-                <div class="mt-2 text-sm text-gray-600 space-y-1">
-                    <div class="flex items-center"><span class="status-dot ${this.statusColors[p.status]}"></span>${p.status}</div>
-                    <div><strong>Assigned:</strong> ${this.getAssigneeName(p)}</div>
-                    <div><strong>Priority:</strong> <span class="font-bold ${{1: 'text-red-600', 2: 'text-yellow-600', 3: 'text-blue-600'}[p.priority]}">${{1: 'High', 2: 'Medium', 3: 'Low'}[p.priority]}</span></div>
-                    <div><strong>Dates:</strong> ${p.startDate || 'Not set'}</div>
-                    <div class="flex justify-between items-center pt-2 mt-1">
-                        <span>${this.getTotalHours(p)} hrs</span>
-                        <span class="font-semibold text-lg text-green-700">$${this.calculateTotalCost(p).toFixed(2)}</span>
-                    </div>
-                </div>
-            </div>`;
+        const headerHTML = `<div class="p-4 sm:p-0"><div class="flex flex-col sm:flex-row flex-wrap justify-between items-center mb-4 gap-4"><div class="flex rounded-lg border border-gray-300 p-1 self-start">${['All', 'DIY', 'Contractor'].map(f => `<button class="text-sm font-semibold py-1 px-3 rounded-md ${this.state.listFilter === f ? 'bg-blue-500 text-white' : 'hover:bg-gray-100'}" onclick="app.state.listFilter = '${f}'; app.render();">${f}</button>`).join('')}</div><div class="flex items-center gap-4 self-start sm:self-center"><button class="text-sm font-semibold text-blue-600 flex items-center gap-2" onclick="app.copyProjectList()"><i data-lucide="copy" class="w-4 h-4"></i>Copy List</button><label class="flex items-center gap-2 cursor-pointer"><span class="text-sm font-medium">Show Completed</span><input type="checkbox" ${this.state.showDoneInList ? 'checked' : ''} class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" onchange="app.state.showDoneInList = this.checked; app.render();"></label></div></div></div>`;
         
+        const createMobileCard = p => `<div class="border-t border-gray-200 px-3 py-2 cursor-pointer hover:bg-gray-50 flex items-center gap-3" onclick="app.editProject('${p.id}')"><div class="flex-grow"><div class="flex justify-between items-start"><h4 class="font-semibold text-sm leading-tight">${p.name}</h4><span class="font-bold text-sm text-green-700 whitespace-nowrap ml-2">$${this.calculateTotalCost(p).toFixed(0)}</span></div><div class="flex justify-between items-center text-xs text-gray-500 mt-1"><span class="flex items-center"><span class="status-dot w-2 h-2 mr-1.5 ${this.statusColors[p.status]}"></span>${p.status}</span><span class="truncate ml-2">${this.getAssigneeName(p)}</span></div></div></div>`;
         let mobileHTML = `<div class="md:hidden">`;
         datedProjects.forEach(p => mobileHTML += createMobileCard(p));
         if (undatedProjects.length > 0) {
-            mobileHTML += `<h3 class="text-xl font-bold mt-8 mb-2 p-4 bg-gray-100 rounded-t-lg">Projects with No Date</h3>`;
+            mobileHTML += `<h3 class="text-md font-bold my-2 p-2 bg-gray-100">Projects with No Date</h3>`;
             undatedProjects.forEach(p => mobileHTML += createMobileCard(p));
         }
         mobileHTML += '</div>';
 
         const tableHeader = `<thead><tr class="text-left text-sm text-gray-500 font-semibold"><th class="p-2">Start Date</th><th class="p-2">Priority</th><th class="p-2">Project Name</th><th class="p-2">Size</th><th class="p-2">Assigned To</th><th class="p-2">Status</th><th class="p-2">Hours</th><th class="p-2">Cost</th></tr></thead>`;
-        const createTableRow = p => `<tr class="border-t border-gray-200 hover:bg-gray-50 cursor-pointer" onclick="app.editProject('${p.id}')"><td class="p-2">${p.startDate || ''}</td><td class="p-2"><span class="font-bold ${{1: 'text-red-600', 2: 'text-yellow-600', 3: 'text-blue-600'}[p.priority]}">${{1: 'High', 2: 'Medium', 3: 'Low'}[p.priority]}</span></td><td class="p-2 font-semibold">${p.name}</td><td class="p-2"><span class="text-xs font-semibold px-2 py-0.5 rounded-full ${this.sizeBadgeClasses[p.projectSize]}">${p.projectSize}</span></td><td class="p-2">${this.getAssigneeName(p)}</td><td class="p-2 flex items-center"><span class="status-dot ${this.statusColors[p.status]}"></span>${p.status}</td><td class="p-2">${this.getTotalHours(p)}</td><td class="p-2 font-semibold">$${this.calculateTotalCost(p).toFixed(2)}</td></tr>`;
-        
-        let tableHTML = `<div class="hidden md:block">`;
-        tableHTML += `<div class="overflow-x-auto"><table class="w-full">${tableHeader}<tbody>${datedProjects.map(createTableRow).join('')}</tbody></table></div>`;
+        const createTableRow = p => `<tr class="border-t border-gray-200 hover:bg-gray-50 cursor-pointer" onclick="app.editProject('${p.id}')"><td class="p-2">${p.startDate || ''}</td><td class="p-2"><span class="font-bold ${{1: 'text-red-600', 2: 'text-yellow-600', 3: 'text-blue-600'}[p.priority]}">${{1: 'High', 2: 'Medium', 3: 'Low'}[p.priority]}</span></td><td class="p-2 font-semibold">${p.name}</td><td class="p-2"><span class="text-xs font-semibold px-2 py-0.5 rounded-full ${this.sizeBadgeClasses[p.projectSize]}">${p.projectSize}</span></td><td class="p-2">${this.getAssigneeName(p)}</td><td class="p-2 flex items-center"><span class="status-dot mr-2 ${this.statusColors[p.status]}"></span>${p.status}</td><td class="p-2">${this.getTotalHours(p)}</td><td class="p-2 font-semibold">$${this.calculateTotalCost(p).toFixed(2)}</td></tr>`;
+        let tableHTML = `<div class="hidden md:block"><div class="overflow-x-auto"><table class="w-full">${tableHeader}<tbody>${datedProjects.map(createTableRow).join('')}</tbody></table></div>`;
         if (undatedProjects.length > 0) {
             tableHTML += `<h3 class="text-xl font-bold mt-8 mb-4">Projects with No Date</h3><div class="overflow-x-auto"><table class="w-full">${tableHeader}<tbody>${undatedProjects.map(createTableRow).join('')}</tbody></table></div>`;
         }
@@ -462,41 +418,56 @@ const app = {
         projects.forEach(p => {
             const subtasks = p.subtasks || [];
             if (subtasks.length > 0) {
-                subtasks.forEach(st => {
-                    if (st.startDate) {
-                        const color = colorMap.get(st.assignedTo) || '#6b7280';
-                        events.push({ id: p.id, title: `${p.name} - ${st.name}`, start: st.startDate, end: st.endDate ? new Date(new Date(st.endDate).getTime() + 86400000).toISOString().split('T')[0] : st.startDate, backgroundColor: color, textColor: '#ffffff' });
-                    }
-                });
+                subtasks.forEach(st => { if (st.startDate) events.push({ id: p.id, title: `${p.name} - ${st.name}`, start: st.startDate, end: st.endDate ? new Date(new Date(st.endDate).getTime() + 86400000).toISOString().split('T')[0] : st.startDate, backgroundColor: colorMap.get(st.assignedTo) || '#6b7280', textColor: '#ffffff' }); });
             } else if (p.startDate) {
                 const color = p.type === 'DIY' && p.familyMembers?.length > 0 ? colorMap.get(p.familyMembers[0]) || '#6b7280' : '#6b7280';
                 events.push({ id: p.id, title: p.name, start: p.startDate, end: p.endDate ? new Date(new Date(p.endDate).getTime() + 86400000).toISOString().split('T')[0] : p.startDate, backgroundColor: color, textColor: '#ffffff' });
             }
         });
-
         if (!this.calendar) {
-            this.calendar = new FullCalendar.Calendar(calendarEl, { 
-                initialView: 'dayGridMonth', 
-                headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' }, 
-                events: events, 
-                eventClick: (info) => this.editProject(info.event.id) 
-            });
-            if (this.state.activeView === 'calendar') {
-                this.calendar.render();
-            }
+            this.calendar = new FullCalendar.Calendar(calendarEl, { initialView: 'dayGridMonth', headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' }, events: events, eventClick: (info) => this.editProject(info.event.id) });
+            if (this.state.activeView === 'calendar') this.calendar.render();
         } else {
             this.calendar.removeAllEvents();
             this.calendar.addEventSource(events);
         }
     },
     
+    renderBudget() {
+        const container = document.getElementById('budget-view');
+        const monthlySpend = this.state.projects.reduce((acc, p) => {
+            if (!p.startDate) return acc;
+            const monthKey = p.startDate.substring(0, 7); // "YYYY-MM"
+            const cost = this.calculateTotalCost(p);
+            if (cost > 0) {
+                if (!acc[monthKey]) acc[monthKey] = { total: 0, projects: [] };
+                acc[monthKey].total += cost;
+                acc[monthKey].projects.push({ name: p.name, cost: cost, type: p.type });
+            }
+            return acc;
+        }, {});
+
+        const sortedMonths = Object.keys(monthlySpend).sort();
+        if (sortedMonths.length === 0) {
+            container.innerHTML = `<h2 class="text-2xl font-bold mb-4">Monthly Budget</h2><p class="text-center text-gray-500 py-8">No projects with costs and start dates found.</p>`;
+            return;
+        }
+
+        const maxSpend = Math.max(...Object.values(monthlySpend).map(m => m.total));
+        let html = `<h2 class="text-2xl font-bold mb-6">Monthly Budget Outlook</h2><div class="space-y-6">`;
+        sortedMonths.forEach(monthKey => {
+            const monthData = monthlySpend[monthKey];
+            const barWidth = maxSpend > 0 ? (monthData.total / maxSpend) * 100 : 0;
+            const monthName = new Date(`${monthKey}-02`).toLocaleString('default', { month: 'long', year: 'numeric' });
+            html += `<div><div class="flex justify-between items-center mb-1"><span class="font-semibold text-gray-700">${monthName}</span><span class="font-bold text-lg text-green-700">$${monthData.total.toFixed(2)}</span></div><div class="w-full bg-gray-200 rounded-full h-4"><div class="bg-blue-500 h-4 rounded-full" style="width: ${barWidth}%"></div></div><ul class="mt-2 text-sm text-gray-600 space-y-1">${monthData.projects.sort((a,b) => b.cost - a.cost).map(p => `<li class="flex justify-between border-b last:border-b-0 py-1"><span>${p.name} <span class="text-xs p-1 rounded ${p.type === 'DIY' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}">${p.type}</span></span><span class="font-medium">$${p.cost.toFixed(2)}</span></li>`).join('')}</ul></div>`;
+        });
+        html += `</div>`;
+        container.innerHTML = html;
+    },
+
     renderReports() {
         const container = document.getElementById('reports-view');
-        container.innerHTML = `<h2 class="text-2xl font-bold mb-4">Reports</h2>
-            <div class="space-y-6">
-                <div><h3 class="text-xl font-semibold mb-3 border-b pb-2">Monthly Outlook</h3>${this.getMonthlyOutlookReportHTML()}</div>
-                <div><h3 class="text-xl font-semibold mb-3 border-b pb-2">Workload by Person</h3>${this.getWorkloadReportHTML()}</div>
-            </div>`;
+        container.innerHTML = `<h2 class="text-2xl font-bold mb-4">Reports</h2><div class="space-y-6"><div><h3 class="text-xl font-semibold mb-3 border-b pb-2">Monthly Outlook</h3>${this.getMonthlyOutlookReportHTML()}</div><div><h3 class="text-xl font-semibold mb-3 border-b pb-2">Workload by Person</h3>${this.getWorkloadReportHTML()}</div></div>`;
     },
     getMonthlyOutlookReportHTML() {
         const outlookByMonth = this.state.projects.reduce((acc, p) => {
@@ -516,19 +487,9 @@ const app = {
             if (p.type !== 'DIY') return;
             const subtasks = p.subtasks || [];
             if (subtasks.length > 0) {
-                subtasks.forEach(st => {
-                    if (!st.startDate || !st.assignedTo) return;
-                    const person = st.assignedTo; const month = new Date(st.startDate).toLocaleString('default', { month: 'long', year: 'numeric' });
-                    if (!workload[person]) workload[person] = {}; if (!workload[person][month]) workload[person][month] = 0;
-                    workload[person][month] += Number(st.hours || 0);
-                });
+                subtasks.forEach(st => { if (!st.startDate || !st.assignedTo) return; const person = st.assignedTo; const month = new Date(st.startDate).toLocaleString('default', { month: 'long', year: 'numeric' }); if (!workload[person]) workload[person] = {}; if (!workload[person][month]) workload[person][month] = 0; workload[person][month] += Number(st.hours || 0); });
             } else {
-                (p.familyMembers || []).forEach(person => {
-                    if (!p.startDate) return;
-                    const month = new Date(p.startDate).toLocaleString('default', { month: 'long', year: 'numeric' });
-                    if (!workload[person]) workload[person] = {}; if (!workload[person][month]) workload[person][month] = 0;
-                    workload[person][month] += Number(p.hours || 0);
-                });
+                (p.familyMembers || []).forEach(person => { if (!p.startDate) return; const month = new Date(p.startDate).toLocaleString('default', { month: 'long', year: 'numeric' }); if (!workload[person]) workload[person] = {}; if (!workload[person][month]) workload[person][month] = 0; workload[person][month] += Number(p.hours || 0); });
             }
         });
         return Object.keys(workload).length > 0 ? Object.keys(workload).sort().map(person => `<div class="mb-2 p-4 rounded-lg border bg-gray-50"><div class="font-semibold text-lg">${person}</div><ul class="list-disc pl-5 pt-2">${Object.keys(workload[person]).sort((a,b) => new Date(a) - new Date(b)).map(month => `<li><strong>${month}:</strong> ${workload[person][month]} hours</li>`).join('')}</ul></div>`).join('') : `<p class="text-center text-gray-500 py-8">No hours assigned to DIY projects yet.</p>`;
@@ -538,19 +499,11 @@ const app = {
         const projects = this.getFilteredProjects();
         const container = document.getElementById('assignments-view');
         const assignees = [...this.state.family.map(f => f.name), 'Contractor'];
-        
         container.innerHTML = assignees.map(assignee => {
             const isContractorLane = assignee === 'Contractor';
             const laneProjects = projects.filter(p => isContractorLane ? p.type === 'Contractor' : (p.familyMembers || []).includes(assignee));
             if (laneProjects.length === 0) return '';
-            
-            return `
-            <div class="p-5 rounded-xl shadow-md bg-white">
-                <h2 class="text-2xl font-bold mb-4">${assignee}</h2>
-                <div class="space-y-3 min-h-[100px]">
-                    ${laneProjects.map(p => this.createProjectCard(p)).join('')}
-                </div>
-            </div>`;
+            return `<div class="p-5 rounded-xl shadow-md bg-white"><h2 class="text-2xl font-bold mb-4">${assignee}</h2><div class="space-y-3 min-h-[100px]">${laneProjects.map(p => this.createProjectCard(p)).join('')}</div></div>`;
         }).join('');
     },
 
@@ -569,10 +522,10 @@ const app = {
         document.getElementById('projectQuote').value = p.quote || '';
         document.getElementById('projectHours').value = p.hours || '';
         document.getElementById('projectNotes').value = p.notes || '';
-        
         document.getElementById(p.type === 'Contractor' ? 'projectTypeContractor' : 'projectTypeDIY').checked = true;
         this.handleProjectTypeChange();
-        this.populateFamilyMembers(p.familyMembers); this.populateContractors(p.contractorId);
+        this.populateFamilyMembers(p.familyMembers);
+        this.populateContractors(p.contractorId);
         document.getElementById('materialsList').innerHTML = ''; (p.materials || []).forEach(m => this.addMaterialRow(m));
         document.getElementById('subtasksContainer').innerHTML = ''; (p.subtasks || []).forEach(st => this.addSubtaskRow(st));
         this.updateTotalHours();
@@ -583,59 +536,32 @@ const app = {
     async saveProject(e) {
         e.preventDefault(); 
         const id = document.getElementById('projectId').value;
-
-        const projectData = { 
-            name: document.getElementById('projectName').value, status: document.getElementById('projectStatus').value, priority: document.getElementById('projectPriority').value, projectSize: document.getElementById('projectSize').value, startDate: document.getElementById('projectStartDate').value, endDate: document.getElementById('projectEndDate').value, type: document.querySelector('input[name="projectType"]:checked').value, contractorId: document.getElementById('projectContractor').value, quote: parseFloat(document.getElementById('projectQuote').value) || 0, hours: parseFloat(document.getElementById('projectHours').value) || 0, familyMembers: Array.from(document.querySelectorAll('#projectFamilyMembers input:checked')).map(el => el.value), materials: Array.from(document.querySelectorAll('.material-row')).map(row => ({ name: row.querySelector('.material-name').value, supplierId: row.querySelector('.material-supplier').value, cost: parseFloat(row.querySelector('.material-cost').value) || 0, owned: row.querySelector('.material-owned').checked, })), subtasks: Array.from(document.querySelectorAll('.subtask-row')).map(row => ({ id: row.dataset.id, name: row.querySelector('.subtask-name').value, status: row.querySelector('.subtask-status').value, assignedTo: row.querySelector('.subtask-assignedTo').value, startDate: row.querySelector('.subtask-startDate').value, endDate: row.querySelector('.subtask-endDate').value, hours: parseFloat(row.querySelector('.subtask-hours').value) || 0 })), notes: document.getElementById('projectNotes').value 
-        };
-
+        const projectData = { name: document.getElementById('projectName').value, status: document.getElementById('projectStatus').value, priority: document.getElementById('projectPriority').value, projectSize: document.getElementById('projectSize').value, startDate: document.getElementById('projectStartDate').value, endDate: document.getElementById('projectEndDate').value, type: document.querySelector('input[name="projectType"]:checked').value, contractorId: document.getElementById('projectContractor').value, quote: parseFloat(document.getElementById('projectQuote').value) || 0, hours: parseFloat(document.getElementById('projectHours').value) || 0, familyMembers: Array.from(document.querySelectorAll('#projectFamilyMembers input:checked')).map(el => el.value), materials: Array.from(document.querySelectorAll('.material-row')).map(row => ({ name: row.querySelector('.material-name').value, supplierId: row.querySelector('.material-supplier').value, cost: parseFloat(row.querySelector('.material-cost').value) || 0, owned: row.querySelector('.material-owned').checked, })), subtasks: Array.from(document.querySelectorAll('.subtask-row')).map(row => ({ id: row.dataset.id, name: row.querySelector('.subtask-name').value, status: row.querySelector('.subtask-status').value, assignedTo: row.querySelector('.subtask-assignedTo').value, startDate: row.querySelector('.subtask-startDate').value, endDate: row.querySelector('.subtask-endDate').value, hours: parseFloat(row.querySelector('.subtask-hours').value) || 0 })), notes: document.getElementById('projectNotes').value };
         if (id) {
             projectData.id = id;
             await db.put('projects', projectData);
         } else {
             await db.add('projects', projectData);
         }
-
         closeModal('projectModal'); this.showToast('Project saved!', 'success');
     },
-    async deleteProject() { if (confirm('Are you sure?')) { await db.delete('projects', this.state.editingProjectId); closeModal('projectModal'); this.showToast('Project deleted', 'error'); } },
 
+    async deleteProject() { if (confirm('Are you sure?')) { await db.delete('projects', this.state.editingProjectId); closeModal('projectModal'); this.showToast('Project deleted', 'error'); } },
     handleProjectTypeChange() { const type = document.querySelector('input[name="projectType"]:checked').value; document.getElementById('diySection').style.display = type === 'DIY' ? 'block' : 'none'; document.getElementById('contractorSection').style.display = type === 'Contractor' ? 'block' : 'none'; },
     populateFamilyMembers(selected = []) { const container = document.getElementById('projectFamilyMembers'); container.innerHTML = this.state.family.map(member => `<label class="flex items-center gap-2"><input type="checkbox" value="${member.name}" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 project-member-checkbox" onchange="app.updateAllSubtaskAssignees()" ${selected.includes(member.name) ? 'checked' : ''}><span>${member.name}</span></label>`).join(''); },
     populateContractors(selectedId = null) { const select = document.getElementById('projectContractor'); select.innerHTML = '<option disabled selected value="">Select contractor</option>' + this.state.contractors.map(c => `<option value="${c.id}" ${c.id == selectedId ? 'selected' : ''}>${c.name}</option>`).join(''); },
     populateSuppliers(selectEl, selectedId = null) { selectEl.innerHTML = '<option disabled selected value="">Select supplier</option>' + this.state.suppliers.map(s => `<option value="${s.id}" ${s.id == selectedId ? 'selected' : ''}>${s.name}</option>`).join(''); },
     addMaterialRow(material = {}) { const container = document.getElementById('materialsList'); const row = document.createElement('div'); row.className = 'material-row grid grid-cols-1 md:grid-cols-10 gap-2 items-center'; const uniqueId = `owned_${Date.now()}`; row.innerHTML = `<input type="text" placeholder="Material Name" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border md:col-span-3 material-name" value="${material.name || ''}"><select class="block w-full border-gray-300 rounded-md shadow-sm p-2 border md:col-span-2 material-supplier"></select><input type="number" placeholder="Cost" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border md:col-span-1 material-cost" value="${material.cost || ''}"><label for="${uniqueId}" class="flex items-center gap-2 cursor-pointer md:col-span-2"><input type="checkbox" id="${uniqueId}" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 material-owned" ${material.owned ? 'checked' : ''}><span>Owned</span></label><button type="button" class="text-red-500 hover:text-red-700 md:col-span-1" onclick="this.parentElement.remove()"><i data-lucide="trash-2" class="w-5 h-5"></i></button>`; container.appendChild(row); this.populateSuppliers(row.querySelector('.material-supplier'), material.supplierId); lucide.createIcons(); },
-    addSubtaskRow(subtask = {}) {
-        const container = document.getElementById('subtasksContainer'); const row = document.createElement('div');
-        row.className = 'subtask-row grid grid-cols-12 gap-2 items-center bg-gray-100 p-2 rounded-md'; row.dataset.id = subtask.id || Date.now();
-        const assignees = this.getProjectMemberNames();
-        row.innerHTML = `<input type="text" placeholder="Subtask Name" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-12 md:col-span-3 subtask-name" value="${subtask.name || ''}">
-            <select class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-6 md:col-span-2 subtask-status">${['Not Started', 'In Progress', 'Done'].map(s => `<option ${s === subtask.status ? 'selected':''}>${s}</option>`).join('')}</select>
-            <select class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-6 md:col-span-2 subtask-assignedTo"><option value="">Unassigned</option>${assignees.map(a => `<option ${a === subtask.assignedTo ? 'selected':''}>${a}</option>`).join('')}</select>
-            <input type="date" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-6 md:col-span-2 subtask-startDate" value="${subtask.startDate || ''}">
-            <input type="date" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-6 md:col-span-2 subtask-endDate" value="${subtask.endDate || ''}">
-            <input type="number" placeholder="Hrs" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-10 md:col-span-1 subtask-hours" value="${subtask.hours || ''}" oninput="app.updateTotalHours()">
-            <button type="button" class="text-red-500 hover:text-red-700 col-span-2 md:col-span-1" onclick="this.parentElement.remove(); app.updateTotalHours();"><i data-lucide="trash-2" class="w-5 h-5"></i></button>`;
-        container.appendChild(row); this.updateTotalHours(); lucide.createIcons();
-    },
+    addSubtaskRow(subtask = {}) { const container = document.getElementById('subtasksContainer'); const row = document.createElement('div'); row.className = 'subtask-row grid grid-cols-12 gap-2 items-center bg-gray-100 p-2 rounded-md'; row.dataset.id = subtask.id || Date.now(); const assignees = this.getProjectMemberNames(); row.innerHTML = `<input type="text" placeholder="Subtask Name" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-12 md:col-span-3 subtask-name" value="${subtask.name || ''}"><select class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-6 md:col-span-2 subtask-status">${['Not Started', 'In Progress', 'Done'].map(s => `<option ${s === subtask.status ? 'selected':''}>${s}</option>`).join('')}</select><select class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-6 md:col-span-2 subtask-assignedTo"><option value="">Unassigned</option>${assignees.map(a => `<option ${a === subtask.assignedTo ? 'selected':''}>${a}</option>`).join('')}</select><input type="date" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-6 md:col-span-2 subtask-startDate" value="${subtask.startDate || ''}"><input type="date" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-6 md:col-span-2 subtask-endDate" value="${subtask.endDate || ''}"><input type="number" placeholder="Hrs" class="block w-full border-gray-300 rounded-md shadow-sm p-2 border col-span-10 md:col-span-1 subtask-hours" value="${subtask.hours || ''}" oninput="app.updateTotalHours()"><button type="button" class="text-red-500 hover:text-red-700 col-span-2 md:col-span-1" onclick="this.parentElement.remove(); app.updateTotalHours();"><i data-lucide="trash-2" class="w-5 h-5"></i></button>`; container.appendChild(row); this.updateTotalHours(); lucide.createIcons(); },
     getProjectMemberNames() { return Array.from(document.querySelectorAll('.project-member-checkbox:checked')).map(el => el.value); },
     updateAllSubtaskAssignees() { const assignees = this.getProjectMemberNames(); document.querySelectorAll('.subtask-assignedTo').forEach(select => { const currentVal = select.value; select.innerHTML = `<option value="">Unassigned</option>${assignees.map(a => `<option ${a === currentVal ? 'selected':''}>${a}</option>`).join('')}`; }); },
-    updateTotalHours() {
-        const subtaskRows = document.querySelectorAll('.subtask-row'); const hoursInput = document.getElementById('projectHours');
-        if (subtaskRows.length > 0) { const total = Array.from(subtaskRows).reduce((sum, row) => sum + (parseFloat(row.querySelector('.subtask-hours').value) || 0), 0); hoursInput.value = total; hoursInput.readOnly = true; } else { hoursInput.readOnly = false; }
-    },
+    updateTotalHours() { const subtaskRows = document.querySelectorAll('.subtask-row'); const hoursInput = document.getElementById('projectHours'); if (subtaskRows.length > 0) { const total = Array.from(subtaskRows).reduce((sum, row) => sum + (parseFloat(row.querySelector('.subtask-hours').value) || 0), 0); hoursInput.value = total; hoursInput.readOnly = true; } else { hoursInput.readOnly = false; } },
     getTotalHours(project) { const subtasks = project.subtasks || []; return subtasks.length > 0 ? subtasks.reduce((sum, st) => sum + (Number(st.hours) || 0), 0) : (Number(project.hours) || 0); },
-    getAssigneeName(project, asArray = false) { if (project.type === 'Contractor' && project.contractorId) { const contractor = this.state.contractors.find(c => c.id == project.contractorId); const name = contractor ? contractor.name : 'Unknown'; return asArray ? [name] : name; } else if (project.type === 'DIY' && project.familyMembers && project.familyMembers.length > 0) { return asArray ? project.familyMembers : project.familyMembers.join(', '); } return asArray ? ['Unassigned'] : 'Unassigned'; },
+    getAssigneeName(project, asArray = false) { if (project.type === 'Contractor' && project.contractorId) { const contractor = this.state.contractors.find(c => c.id == project.contractorId); return asArray ? [contractor ? contractor.name : 'Unknown'] : contractor ? contractor.name : 'Unknown'; } else if (project.type === 'DIY' && project.familyMembers?.length > 0) { return asArray ? project.familyMembers : project.familyMembers.join(', '); } return asArray ? ['Unassigned'] : 'Unassigned'; },
     calculateTotalCost(project) { if (project.type === 'Contractor') return project.quote || 0; return (project.materials || []).reduce((sum, item) => sum + (item.owned ? 0 : item.cost), 0); },
     renderSettingsLists() {
         const familyContainer = document.getElementById('familyList');
-        familyContainer.innerHTML = this.state.family.map(item => `
-            <li class="flex justify-between items-center bg-gray-100 p-2 rounded-md">
-                <div class="flex items-center gap-3">
-                    <span class="color-swatch" style="background-color: ${item.color};"></span>
-                    <span>${item.name}</span>
-                </div>
-                <button class="text-red-500 hover:text-red-700" onclick="app.removeListItem('family', '${item.id}')"><i data-lucide="x" class="w-4 h-4"></i></button>
-            </li>`).join('');
+        familyContainer.innerHTML = this.state.family.map(item => `<li class="flex justify-between items-center bg-gray-100 p-2 rounded-md"><div class="flex items-center gap-3"><span class="color-swatch" style="background-color: ${item.color};"></span><span>${item.name}</span></div><button class="text-red-500 hover:text-red-700" onclick="app.removeListItem('family', '${item.id}')"><i data-lucide="x" class="w-4 h-4"></i></button></li>`).join('');
         ['contractors', 'suppliers'].forEach(key => { document.getElementById(`${key.slice(0,-1)}List`).innerHTML = this.state[key].map(item => `<li class="flex justify-between items-center bg-gray-100 p-2 rounded-md"><span>${item.name}</span><button class="text-red-500 hover:text-red-700" onclick="app.removeListItem('${key}', '${item.id}')"><i data-lucide="x" class="w-4 h-4"></i></button></li>`).join(''); });
         lucide.createIcons();
     },
@@ -644,10 +570,7 @@ const app = {
         const value = inputEl.value.trim();
         if (value) {
             let newItem = { name: value };
-            if (listName === 'family') {
-                const usedColors = this.state.family.map(f => f.color);
-                newItem.color = this.colorPalette.find(c => !usedColors.includes(c)) || this.colorPalette[0];
-            }
+            if (listName === 'family') { newItem.color = this.colorPalette.find(c => !this.state.family.map(f => f.color).includes(c)) || this.colorPalette[0]; }
             await db.add(listName, newItem);
             inputEl.value = '';
         }
@@ -659,20 +582,13 @@ const app = {
         const undated = projects.filter(p => !p.startDate);
         const formatProject = p => `${p.startDate || 'No Date'}: ${p.name} (${p.status}) - ${this.getAssigneeName(p)}`;
         let textToCopy = "Dated Projects:\n" + dated.map(formatProject).join('\n');
-        if (undated.length > 0) {
-            textToCopy += "\n\nUndated Projects:\n" + undated.map(formatProject).join('\n');
-        }
+        if (undated.length > 0) textToCopy += "\n\nUndated Projects:\n" + undated.map(formatProject).join('\n');
         await navigator.clipboard.writeText(textToCopy);
         this.showToast('Project list copied to clipboard!', 'success');
     },
     async exportData() { 
-        const dataToExport = { 
-            projects: await db.getAll('projects'), 
-            family: await db.getAll('family'), 
-            contractors: await db.getAll('contractors'), 
-            suppliers: await db.getAll('suppliers'), 
-        }; 
-        const jsonString = JSON.stringify(dataToExport, null, 2); const blob = new Blob([jsonString], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `home-planner-backup-2025-09-21.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); this.showToast('Data exported!', 'success'); 
+        const dataToExport = { projects: await db.getAll('projects'), family: await db.getAll('family'), contractors: await db.getAll('contractors'), suppliers: await db.getAll('suppliers'), }; 
+        const jsonString = JSON.stringify(dataToExport, null, 2); const blob = new Blob([jsonString], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `home-planner-backup-${new Date().toISOString().split('T')[0]}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url); this.showToast('Data exported!', 'success'); 
     },
     async importData(event) {
         const file = event.target.files[0]; if (!file) return; const reader = new FileReader();
@@ -680,15 +596,8 @@ const app = {
             try { 
                 const data = JSON.parse(e.target.result); 
                 if (!data.projects || !data.family) { throw new Error("Invalid file format."); }
-                if (confirm('This will overwrite all current data. Proceed?')) {
-                    await db.clearAndImport(data);
-                    this.showToast('Data imported!', 'success');
-                }
-            } catch (error) { 
-                this.showToast('Error importing data: ' + error.message, 'error'); 
-            } finally { 
-                event.target.value = null; 
-            }
+                if (confirm('This will overwrite all current data. Proceed?')) { await db.clearAndImport(data); this.showToast('Data imported!', 'success'); }
+            } catch (error) { this.showToast('Error importing data: ' + error.message, 'error'); } finally { event.target.value = null; }
         };
         reader.readAsText(file);
     },
@@ -701,11 +610,7 @@ const app = {
     }
 };
 
-// --- START THE APP --- //
-document.addEventListener('DOMContentLoaded', () => { 
-    window.app = app; 
-    app.init(); 
-});
+document.addEventListener('DOMContentLoaded', () => { window.app = app; app.init(); });
 </script>
 </body>
 </html>
