@@ -355,7 +355,18 @@ const app = {
         document.querySelectorAll('.nav-icon').forEach(t => t.classList.remove('active'));
         document.querySelector(`.nav-icon[data-view='${view}']`).classList.add('active');
         ['kanban', 'list', 'calendar', 'budget', 'reports', 'assignments'].forEach(v => { document.getElementById(`${v}-view`).style.display = (view === v) ? '' : 'none'; });
-        if (view === 'calendar' && this.calendar) setTimeout(() => this.calendar.render(), 0); 
+        
+        // Critical Fix: Force calendar update when tab is switched to ensure it renders correctly
+        if (view === 'calendar') {
+            setTimeout(() => {
+                if (this.calendar) {
+                    this.calendar.render();
+                    this.calendar.updateSize();
+                } else {
+                    this.renderCalendar();
+                }
+            }, 50);
+        }
     },
     
     renderKanban() {
@@ -392,7 +403,6 @@ const app = {
         const undatedProjects = projects.filter(p => !p.startDate);
         const headerHTML = `<div class="p-4 sm:p-0"><div class="flex flex-col sm:flex-row flex-wrap justify-between items-center mb-4 gap-4"><div class="flex rounded-lg border border-gray-300 p-1 self-start">${['All', 'DIY', 'Contractor'].map(f => `<button class="text-sm font-semibold py-1 px-3 rounded-md ${this.state.listFilter === f ? 'bg-blue-500 text-white' : 'hover:bg-gray-100'}" onclick="app.state.listFilter = '${f}'; app.render();">${f}</button>`).join('')}</div><div class="flex items-center gap-4 self-start sm:self-center"><button class="text-sm font-semibold text-blue-600 flex items-center gap-2" onclick="app.copyProjectList()"><i data-lucide="copy" class="w-4 h-4"></i>Copy List</button><label class="flex items-center gap-2 cursor-pointer"><span class="text-sm font-medium">Show Completed</span><input type="checkbox" ${this.state.showDoneInList ? 'checked' : ''} class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" onchange="app.state.showDoneInList = this.checked; app.render();"></label></div></div></div>`;
         
-        // Helper to generate subtask HTML for list view
         const getSubtaskHTML = (p) => {
             if (!p.subtasks || p.subtasks.length === 0) return '';
             return `<div class="mt-2 pl-2 border-l-2 border-gray-200 space-y-1">
@@ -457,32 +467,34 @@ const app = {
         let events = [];
         const colorMap = new Map(this.state.family.map(f => [f.name, f.color]));
 
-        // Helper to calculate end date for FullCalendar (exclusive end date)
+        // Safe Date Calculation for End Date (Inclusive)
         const getEndDate = (start, end) => {
-            if (!end) return undefined; // Let FullCalendar handle single day
-            // Add 1 day to end date so it renders inclusively
+            if (!end) return undefined; 
             const d = new Date(end);
-            d.setDate(d.getDate() + 1);
+            d.setDate(d.getDate() + 1); // Add 1 day for inclusive end date
             return d.toISOString().split('T')[0];
         };
 
         projects.forEach(p => {
             const subtasks = p.subtasks || [];
-            if (subtasks.length > 0) {
-                subtasks.forEach(st => { 
-                    if (st.startDate) {
-                        events.push({ 
-                            id: p.id, 
-                            title: `${p.name} - ${st.name}`, 
-                            start: st.startDate, 
-                            end: getEndDate(st.startDate, st.endDate), 
-                            backgroundColor: colorMap.get(st.assignedTo) || '#6b7280', 
-                            textColor: '#ffffff' 
-                        }); 
-                    }
-                });
-            } else if (p.startDate) {
-                const color = p.type === 'DIY' && p.familyMembers?.length > 0 ? colorMap.get(p.familyMembers[0]) || '#6b7280' : '#6b7280';
+            
+            // 1. Add Subtask Events (if they have dates)
+            subtasks.forEach(st => { 
+                if (st.startDate) {
+                    events.push({ 
+                        id: p.id, 
+                        title: `${p.name} - ${st.name}`, 
+                        start: st.startDate, 
+                        end: getEndDate(st.startDate, st.endDate), 
+                        backgroundColor: colorMap.get(st.assignedTo) || '#6b7280', 
+                        textColor: '#ffffff' 
+                    }); 
+                }
+            });
+
+            // 2. Add Project Event (if it has a date) - INDEPENDENT of subtasks
+            if (p.startDate) {
+                const color = p.type === 'DIY' && p.familyMembers?.length > 0 ? colorMap.get(p.familyMembers[0]) || '#3b82f6' : '#3b82f6';
                 events.push({ 
                     id: p.id, 
                     title: p.name, 
@@ -502,6 +514,7 @@ const app = {
                 eventClick: (info) => this.editProject(info.event.id),
                 height: 'auto'
             });
+            // Only render immediately if the view is already 'calendar'
             if (this.state.activeView === 'calendar') this.calendar.render();
         } else {
             this.calendar.removeAllEvents();
