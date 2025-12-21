@@ -392,7 +392,32 @@ const app = {
         const undatedProjects = projects.filter(p => !p.startDate);
         const headerHTML = `<div class="p-4 sm:p-0"><div class="flex flex-col sm:flex-row flex-wrap justify-between items-center mb-4 gap-4"><div class="flex rounded-lg border border-gray-300 p-1 self-start">${['All', 'DIY', 'Contractor'].map(f => `<button class="text-sm font-semibold py-1 px-3 rounded-md ${this.state.listFilter === f ? 'bg-blue-500 text-white' : 'hover:bg-gray-100'}" onclick="app.state.listFilter = '${f}'; app.render();">${f}</button>`).join('')}</div><div class="flex items-center gap-4 self-start sm:self-center"><button class="text-sm font-semibold text-blue-600 flex items-center gap-2" onclick="app.copyProjectList()"><i data-lucide="copy" class="w-4 h-4"></i>Copy List</button><label class="flex items-center gap-2 cursor-pointer"><span class="text-sm font-medium">Show Completed</span><input type="checkbox" ${this.state.showDoneInList ? 'checked' : ''} class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" onchange="app.state.showDoneInList = this.checked; app.render();"></label></div></div></div>`;
         
-        const createMobileCard = p => `<div class="border-t border-gray-200 px-3 py-2 cursor-pointer hover:bg-gray-50 flex items-center gap-3" onclick="app.editProject('${p.id}')"><div class="flex-grow"><div class="flex justify-between items-start"><h4 class="font-semibold text-sm leading-tight">${p.name}</h4><span class="font-bold text-sm text-green-700 whitespace-nowrap ml-2">$${this.calculateTotalCost(p).toFixed(0)}</span></div><div class="flex justify-between items-center text-xs text-gray-500 mt-1"><span class="flex items-center"><span class="status-dot w-2 h-2 mr-1.5 ${this.statusColors[p.status]}"></span>${p.status}</span><span class="truncate ml-2">${this.getAssigneeName(p)}</span></div></div></div>`;
+        // Helper to generate subtask HTML for list view
+        const getSubtaskHTML = (p) => {
+            if (!p.subtasks || p.subtasks.length === 0) return '';
+            return `<div class="mt-2 pl-2 border-l-2 border-gray-200 space-y-1">
+                ${p.subtasks.map(st => `
+                    <div class="text-xs text-gray-500 flex items-center gap-2">
+                        <span class="w-1.5 h-1.5 rounded-full ${st.status === 'Done' ? 'bg-green-500' : 'bg-gray-300'}"></span>
+                        <span class="${st.status === 'Done' ? 'line-through' : ''}">${st.name}</span>
+                        <span class="text-gray-400">(${st.assignedTo || '-'})</span>
+                    </div>
+                `).join('')}
+            </div>`;
+        };
+
+        const createMobileCard = p => `<div class="border-t border-gray-200 px-3 py-2 cursor-pointer hover:bg-gray-50 flex flex-col gap-2" onclick="app.editProject('${p.id}')">
+            <div class="flex justify-between items-start w-full">
+                <h4 class="font-semibold text-sm leading-tight">${p.name}</h4>
+                <span class="font-bold text-sm text-green-700 whitespace-nowrap ml-2">$${this.calculateTotalCost(p).toFixed(0)}</span>
+            </div>
+            ${getSubtaskHTML(p)}
+            <div class="flex justify-between items-center text-xs text-gray-500 mt-1 w-full">
+                <span class="flex items-center"><span class="status-dot w-2 h-2 mr-1.5 ${this.statusColors[p.status]}"></span>${p.status}</span>
+                <span class="truncate ml-2">${this.getAssigneeName(p)}</span>
+            </div>
+        </div>`;
+
         let mobileHTML = `<div class="md:hidden">`;
         datedProjects.forEach(p => mobileHTML += createMobileCard(p));
         if (undatedProjects.length > 0) {
@@ -402,7 +427,21 @@ const app = {
         mobileHTML += '</div>';
 
         const tableHeader = `<thead><tr class="text-left text-sm text-gray-500 font-semibold"><th class="p-2">Start Date</th><th class="p-2">Priority</th><th class="p-2">Project Name</th><th class="p-2">Size</th><th class="p-2">Assigned To</th><th class="p-2">Status</th><th class="p-2">Hours</th><th class="p-2">Cost</th></tr></thead>`;
-        const createTableRow = p => `<tr class="border-t border-gray-200 hover:bg-gray-50 cursor-pointer" onclick="app.editProject('${p.id}')"><td class="p-2">${p.startDate || ''}</td><td class="p-2"><span class="font-bold ${{1: 'text-red-600', 2: 'text-yellow-600', 3: 'text-blue-600'}[p.priority]}">${{1: 'High', 2: 'Medium', 3: 'Low'}[p.priority]}</span></td><td class="p-2 font-semibold">${p.name}</td><td class="p-2"><span class="text-xs font-semibold px-2 py-0.5 rounded-full ${this.sizeBadgeClasses[p.projectSize]}">${p.projectSize}</span></td><td class="p-2">${this.getAssigneeName(p)}</td><td class="p-2 flex items-center"><span class="status-dot mr-2 ${this.statusColors[p.status]}"></span>${p.status}</td><td class="p-2">${this.getTotalHours(p)}</td><td class="p-2 font-semibold">$${this.calculateTotalCost(p).toFixed(2)}</td></tr>`;
+        
+        const createTableRow = p => `<tr class="border-t border-gray-200 hover:bg-gray-50 cursor-pointer" onclick="app.editProject('${p.id}')">
+            <td class="p-2 align-top">${p.startDate || ''}</td>
+            <td class="p-2 align-top"><span class="font-bold ${{1: 'text-red-600', 2: 'text-yellow-600', 3: 'text-blue-600'}[p.priority]}">${{1: 'High', 2: 'Medium', 3: 'Low'}[p.priority]}</span></td>
+            <td class="p-2 font-semibold align-top">
+                <div>${p.name}</div>
+                ${getSubtaskHTML(p)}
+            </td>
+            <td class="p-2 align-top"><span class="text-xs font-semibold px-2 py-0.5 rounded-full ${this.sizeBadgeClasses[p.projectSize]}">${p.projectSize}</span></td>
+            <td class="p-2 align-top">${this.getAssigneeName(p)}</td>
+            <td class="p-2 align-top flex items-center"><span class="status-dot mr-2 ${this.statusColors[p.status]}"></span>${p.status}</td>
+            <td class="p-2 align-top">${this.getTotalHours(p)}</td>
+            <td class="p-2 align-top font-semibold">$${this.calculateTotalCost(p).toFixed(2)}</td>
+        </tr>`;
+
         let tableHTML = `<div class="hidden md:block"><div class="overflow-x-auto"><table class="w-full">${tableHeader}<tbody>${datedProjects.map(createTableRow).join('')}</tbody></table></div>`;
         if (undatedProjects.length > 0) {
             tableHTML += `<h3 class="text-xl font-bold mt-8 mb-4">Projects with No Date</h3><div class="overflow-x-auto"><table class="w-full">${tableHeader}<tbody>${undatedProjects.map(createTableRow).join('')}</tbody></table></div>`;
@@ -413,19 +452,56 @@ const app = {
     },
 
     renderCalendar() {
-        const projects = this.getFilteredProjects(); const calendarEl = document.getElementById('calendar'); let events = [];
+        const projects = this.getFilteredProjects(); 
+        const calendarEl = document.getElementById('calendar'); 
+        let events = [];
         const colorMap = new Map(this.state.family.map(f => [f.name, f.color]));
+
+        // Helper to calculate end date for FullCalendar (exclusive end date)
+        const getEndDate = (start, end) => {
+            if (!end) return undefined; // Let FullCalendar handle single day
+            // Add 1 day to end date so it renders inclusively
+            const d = new Date(end);
+            d.setDate(d.getDate() + 1);
+            return d.toISOString().split('T')[0];
+        };
+
         projects.forEach(p => {
             const subtasks = p.subtasks || [];
             if (subtasks.length > 0) {
-                subtasks.forEach(st => { if (st.startDate) events.push({ id: p.id, title: `${p.name} - ${st.name}`, start: st.startDate, end: st.endDate ? new Date(new Date(st.endDate).getTime() + 86400000).toISOString().split('T')[0] : st.startDate, backgroundColor: colorMap.get(st.assignedTo) || '#6b7280', textColor: '#ffffff' }); });
+                subtasks.forEach(st => { 
+                    if (st.startDate) {
+                        events.push({ 
+                            id: p.id, 
+                            title: `${p.name} - ${st.name}`, 
+                            start: st.startDate, 
+                            end: getEndDate(st.startDate, st.endDate), 
+                            backgroundColor: colorMap.get(st.assignedTo) || '#6b7280', 
+                            textColor: '#ffffff' 
+                        }); 
+                    }
+                });
             } else if (p.startDate) {
                 const color = p.type === 'DIY' && p.familyMembers?.length > 0 ? colorMap.get(p.familyMembers[0]) || '#6b7280' : '#6b7280';
-                events.push({ id: p.id, title: p.name, start: p.startDate, end: p.endDate ? new Date(new Date(p.endDate).getTime() + 86400000).toISOString().split('T')[0] : p.startDate, backgroundColor: color, textColor: '#ffffff' });
+                events.push({ 
+                    id: p.id, 
+                    title: p.name, 
+                    start: p.startDate, 
+                    end: getEndDate(p.startDate, p.endDate), 
+                    backgroundColor: color, 
+                    textColor: '#ffffff' 
+                });
             }
         });
+
         if (!this.calendar) {
-            this.calendar = new FullCalendar.Calendar(calendarEl, { initialView: 'dayGridMonth', headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' }, events: events, eventClick: (info) => this.editProject(info.event.id) });
+            this.calendar = new FullCalendar.Calendar(calendarEl, { 
+                initialView: 'dayGridMonth', 
+                headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' }, 
+                events: events, 
+                eventClick: (info) => this.editProject(info.event.id),
+                height: 'auto'
+            });
             if (this.state.activeView === 'calendar') this.calendar.render();
         } else {
             this.calendar.removeAllEvents();
