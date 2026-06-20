@@ -572,6 +572,7 @@
                 if (!p) return;
                 this.resetForm();
 
+                document.getElementById('projectModalTitle').innerText = p.name || 'Edit Plan';
                 document.getElementById('projectId').value = p.id;
                 document.getElementById('projectName').value = p.name;
                 document.getElementById('projectStatus').value = p.status;
