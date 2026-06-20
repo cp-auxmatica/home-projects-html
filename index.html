@@ -262,6 +262,20 @@
                             <i data-lucide="target" class="w-4 h-4"></i> Goal Tracking</div>
                         <p class="text-xs text-slate-500">Set milestones below to track progress.</p>
                     </div>
+
+                    <div id="fields-purchase" class="hidden space-y-4">
+                        <div
+                            class="flex items-center gap-2 text-cyan-700 font-semibold border-b border-cyan-200 pb-2">
+                            <i data-lucide="shopping-cart" class="w-4 h-4"></i> Purchase Details</div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div><label class="text-xs font-bold text-slate-500">Store / Vendor</label><input
+                                    id="purchaseStore" type="text" class="w-full rounded-md border-slate-300 text-sm">
+                            </div>
+                            <div><label class="text-xs font-bold text-slate-500">Link</label><input id="purchaseLink"
+                                    type="url" class="w-full rounded-md border-slate-300 text-sm"
+                                    placeholder="https://"></div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -407,7 +421,8 @@
                 { name: 'Event', icon: 'calendar-heart', color: 'purple', formId: 'fields-event' },
                 { name: 'Party', icon: 'party-popper', color: 'pink', formId: 'fields-party' },
                 { name: 'Home Project', icon: 'hammer', color: 'orange', formId: 'fields-project' },
-                { name: 'Family Goal', icon: 'target', color: 'emerald', formId: 'fields-goal' }
+                { name: 'Family Goal', icon: 'target', color: 'emerald', formId: 'fields-goal' },
+                { name: 'Purchase', icon: 'shopping-cart', color: 'cyan', formId: 'fields-purchase' }
             ],
 
             priorityMeta: {
@@ -427,7 +442,8 @@
                     await db.init();
                     db.listen('categories', (data) => {
                         this.state.categories = data;
-                        if (data.length === 0) this.catTypes.forEach(c => db.add('categories', c));
+                        const missing = this.catTypes.filter(t => !data.some(c => c.name === t.name));
+                        if (missing.length) missing.forEach(c => db.add('categories', c));
                         this.render();
                     });
                     ['projects', 'family', 'contractors'].forEach(c => db.listen(c, d => { this.state[c] = d; this.render(); }));
@@ -521,7 +537,7 @@
                                     <div class="font-semibold flex items-center gap-1.5">${this.priorityBadge(p.priority)} ${p.name}</div>
                                     <div class="text-xs text-slate-500 flex gap-2">
                                         <span>${p.startDate || 'No date'}</span>
-                                        ${(p.details?.destination || p.details?.eventLocation || p.details?.partyTheme) ? `<span class="text-slate-400">|</span> <span>${p.details?.destination || p.details?.eventLocation || p.details?.partyTheme}</span>` : ''}
+                                        ${(p.details?.destination || p.details?.eventLocation || p.details?.partyTheme || p.details?.purchaseStore) ? `<span class="text-slate-400">|</span> <span>${p.details?.destination || p.details?.eventLocation || p.details?.partyTheme || p.details?.purchaseStore}</span>` : ''}
                                     </div>
                                     ${p.description ? `<div class="text-xs text-slate-500 mt-1 truncate">${this.escapeHtml(p.description)}</div>` : ''}
                                 </div>
@@ -618,6 +634,8 @@
                 // Populate Details safely
                 const d = p.details || {};
                 if (d.destination) document.getElementById('vacationDest').value = d.destination;
+                if (d.purchaseStore) document.getElementById('purchaseStore').value = d.purchaseStore;
+                if (d.purchaseLink) document.getElementById('purchaseLink').value = d.purchaseLink;
                 if (d.accommodation) document.getElementById('vacationHotel').value = d.accommodation;
                 if (d.travelInfo) document.getElementById('vacationTravel').value = d.travelInfo;
                 if (d.renovationType) document.getElementById('projectType').value = d.renovationType;
@@ -659,7 +677,7 @@
                 this.renderCategorySelector(id);
 
                 // Hide all sections first
-                ['fields-vacation', 'fields-event', 'fields-party', 'fields-project', 'fields-goal'].forEach(i => document.getElementById(i).classList.add('hidden'));
+                ['fields-vacation', 'fields-event', 'fields-party', 'fields-project', 'fields-goal', 'fields-purchase'].forEach(i => document.getElementById(i).classList.add('hidden'));
 
                 // Show correct section
                 const def = this.catTypes.find(t => t.name === cat.name) || this.catTypes[3];
@@ -674,6 +692,7 @@
 
                 if (cat.name === 'Vacation') { lblMat.innerText = "Shopping List"; lblSub.innerText = "Packing List"; }
                 else if (cat.name === 'Event' || cat.name === 'Party') { lblMat.innerText = "Things to Buy"; lblSub.innerText = "Prep Tasks"; }
+                else if (cat.name === 'Purchase') { lblMat.innerText = "Options to Compare"; lblSub.innerText = "Checklist"; }
                 else { lblMat.innerText = "Materials"; lblSub.innerText = "Tasks"; }
             },
 
@@ -704,7 +723,9 @@
                     partyLocation: locVal,
                     partyTime: timeVal,
                     renovationType: document.getElementById('projectType').value,
-                    contractorId: document.getElementById('projectContractor').value
+                    contractorId: document.getElementById('projectContractor').value,
+                    purchaseStore: document.getElementById('purchaseStore').value,
+                    purchaseLink: document.getElementById('purchaseLink').value
                 };
 
                 const data = {
@@ -736,7 +757,7 @@
                 document.getElementById('projectId').value = '';
                 document.getElementById('materialsList').innerHTML = '';
                 document.getElementById('subtasksContainer').innerHTML = '';
-                ['vacationDest', 'vacationHotel', 'vacationTravel', 'eventTime', 'eventLocation', 'partyTheme', 'partyGuests', 'partyLocation', 'partyTime'].forEach(i => {
+                ['vacationDest', 'vacationHotel', 'vacationTravel', 'eventTime', 'eventLocation', 'partyTheme', 'partyGuests', 'partyLocation', 'partyTime', 'purchaseStore', 'purchaseLink'].forEach(i => {
                     const el = document.getElementById(i); if (el) el.value = '';
                 });
                 this.renderCategorySelector(); this.renderFamilySelector(); this.renderContractorSelector();
