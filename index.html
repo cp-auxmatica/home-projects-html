@@ -144,8 +144,8 @@
                     <input type="hidden" id="selectedCategoryId" required>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-                    <div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                    <div class="md:col-span-1">
                         <label class="block text-sm font-medium text-slate-700 mb-1">Title</label>
                         <input type="text" id="projectName"
                             class="w-full border-slate-300 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500"
@@ -158,6 +158,16 @@
                             <option>In Progress</option>
                             <option>Blocked</option>
                             <option>Done</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-slate-700 mb-1">Priority</label>
+                        <select id="projectPriority" class="w-full border-slate-300 rounded-lg text-sm">
+                            <option value="Highest">⬆⬆ Highest</option>
+                            <option value="High">⬆ High</option>
+                            <option value="Medium" selected>= Medium</option>
+                            <option value="Low">⬇ Low</option>
+                            <option value="Lowest">⬇⬇ Lowest</option>
                         </select>
                     </div>
                 </div>
@@ -400,6 +410,18 @@
                 { name: 'Family Goal', icon: 'target', color: 'emerald', formId: 'fields-goal' }
             ],
 
+            priorityMeta: {
+                Highest: { icon: 'chevrons-up', color: 'red' },
+                High: { icon: 'chevron-up', color: 'orange' },
+                Medium: { icon: 'equal', color: 'amber' },
+                Low: { icon: 'chevron-down', color: 'blue' },
+                Lowest: { icon: 'chevrons-down', color: 'slate' }
+            },
+            priorityBadge(priority) {
+                const m = this.priorityMeta[priority] || this.priorityMeta.Medium;
+                return `<span class="inline-flex items-center gap-0.5 text-${m.color}-600" title="${priority || 'Medium'} priority"><i data-lucide="${m.icon}" class="w-3.5 h-3.5"></i></span>`;
+            },
+
             async init() {
                 try {
                     await db.init();
@@ -438,6 +460,10 @@
                 items.sort((a, b) => {
                     if (this.state.sortBy === 'Name') return a.name.localeCompare(b.name);
                     if (this.state.sortBy === 'Cost') return (b.quote || 0) - (a.quote || 0);
+                    if (this.state.sortBy === 'Priority') {
+                        const order = { Highest: 0, High: 1, Medium: 2, Low: 3, Lowest: 4 };
+                        return (order[a.priority] ?? 2) - (order[b.priority] ?? 2);
+                    }
                     // Default Date
                     return new Date(a.startDate || '9999') - new Date(b.startDate || '9999');
                 });
@@ -472,6 +498,7 @@
                         <option value="Date" ${this.state.sortBy === 'Date' ? 'selected' : ''}>Date</option>
                         <option value="Name" ${this.state.sortBy === 'Name' ? 'selected' : ''}>Name</option>
                         <option value="Cost" ${this.state.sortBy === 'Cost' ? 'selected' : ''}>Cost</option>
+                        <option value="Priority" ${this.state.sortBy === 'Priority' ? 'selected' : ''}>Priority</option>
                     </select>
                 </div>`;
 
@@ -491,7 +518,7 @@
                         <div class="divide-y">${groups[g].map(p => `
                             <div onclick="app.editProject('${p.id}')" class="px-4 py-3 hover:bg-slate-50 cursor-pointer flex justify-between items-center gap-4">
                                 <div class="min-w-0">
-                                    <div class="font-semibold">${p.name}</div>
+                                    <div class="font-semibold flex items-center gap-1.5">${this.priorityBadge(p.priority)} ${p.name}</div>
                                     <div class="text-xs text-slate-500 flex gap-2">
                                         <span>${p.startDate || 'No date'}</span>
                                         ${(p.details?.destination || p.details?.eventLocation || p.details?.partyTheme) ? `<span class="text-slate-400">|</span> <span>${p.details?.destination || p.details?.eventLocation || p.details?.partyTheme}</span>` : ''}
@@ -513,6 +540,7 @@
                         <div class="bg-${cat.color}-50 text-${cat.color}-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase flex items-center gap-1">
                             <i data-lucide="${cat.icon}" class="w-3 h-3"></i> ${cat.name}
                         </div>
+                        ${this.priorityBadge(p.priority)}
                     </div>
                     <h4 class="font-bold text-slate-800">${p.name}</h4>
                     ${p.description ? `<p class="text-xs text-slate-500 mt-1 line-clamp-2">${this.escapeHtml(p.description)}</p>` : ''}
@@ -576,6 +604,7 @@
                 document.getElementById('projectId').value = p.id;
                 document.getElementById('projectName').value = p.name;
                 document.getElementById('projectStatus').value = p.status;
+                document.getElementById('projectPriority').value = p.priority || 'Medium';
                 document.getElementById('projectQuote').value = p.quote;
                 document.getElementById('projectNotes').value = Array.isArray(p.notes) ? p.notes.map(n => n.text).join('\n\n') : (p.notes || '');
                 document.getElementById('projectDescription').value = p.description || '';
@@ -682,6 +711,7 @@
                     categoryId: catId,
                     name: document.getElementById('projectName').value,
                     status: document.getElementById('projectStatus').value,
+                    priority: document.getElementById('projectPriority').value,
                     startDate: startDate,
                     endDate: document.getElementById('projectEndDate').value,
                     quote: parseFloat(document.getElementById('projectQuote').value) || 0,
