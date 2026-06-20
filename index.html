@@ -489,15 +489,16 @@
                     <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
                         <div class="bg-slate-50 px-4 py-2 border-b font-bold text-slate-700">${g}</div>
                         <div class="divide-y">${groups[g].map(p => `
-                            <div onclick="app.editProject('${p.id}')" class="px-4 py-3 hover:bg-slate-50 cursor-pointer flex justify-between items-center">
-                                <div>
+                            <div onclick="app.editProject('${p.id}')" class="px-4 py-3 hover:bg-slate-50 cursor-pointer flex justify-between items-center gap-4">
+                                <div class="min-w-0">
                                     <div class="font-semibold">${p.name}</div>
                                     <div class="text-xs text-slate-500 flex gap-2">
                                         <span>${p.startDate || 'No date'}</span>
                                         ${(p.details?.destination || p.details?.eventLocation || p.details?.partyTheme) ? `<span class="text-slate-400">|</span> <span>${p.details?.destination || p.details?.eventLocation || p.details?.partyTheme}</span>` : ''}
                                     </div>
+                                    ${p.description ? `<div class="text-xs text-slate-500 mt-1 truncate">${this.escapeHtml(p.description)}</div>` : ''}
                                 </div>
-                                <span class="text-sm font-bold text-slate-600">$${p.quote || 0}</span>
+                                <span class="text-sm font-bold text-slate-600 flex-shrink-0">$${p.quote || 0}</span>
                             </div>`).join('')}
                         </div>
                     </div>`).join('');
@@ -514,6 +515,7 @@
                         </div>
                     </div>
                     <h4 class="font-bold text-slate-800">${p.name}</h4>
+                    ${p.description ? `<p class="text-xs text-slate-500 mt-1 line-clamp-2">${this.escapeHtml(p.description)}</p>` : ''}
                     <div class="mt-2 pt-2 border-t flex justify-between text-xs text-slate-500">
                         <span>${p.startDate || ''}</span><span>$${p.quote || 0}</span>
                     </div>
@@ -710,6 +712,11 @@
             },
 
             getCat(id) { return this.state.categories.find(c => c.id === id) || { name: 'Other', icon: 'circle', color: 'gray' }; },
+            escapeHtml(str) {
+                const div = document.createElement('div');
+                div.textContent = str;
+                return div.innerHTML;
+            },
             renderCategorySelector(selId = null) {
                 document.getElementById('category-selector-container').innerHTML = this.state.categories.map(c => {
                     const def = this.catTypes.find(t => t.name === c.name) || { icon: 'circle', color: 'slate' };
